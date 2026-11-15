@@ -53,9 +53,9 @@ def parse_coverage(report: str) -> int | None:
     return int(m.group(1)) if m else None
 
 def run_ruff() -> dict:
-    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app",
+    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app:ro",
            "sdlc-sandbox", "ruff", "check", "src", "--output-format", "json", "--no-cache"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     try:
         issues = json.loads(r.stdout or "[]")
     except json.JSONDecodeError:

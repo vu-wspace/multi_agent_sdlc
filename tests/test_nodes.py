@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +127,129 @@ def test_after_review(state, expected):
     assert after_review(state) == expected
 
 
-def test_graph_builds_without_env():
-    from multi_agent_sdlc.main import app
-    assert app is not None
+def test_graph_builds_with_release_step_and_no_static_interrupt():
+    from multi_agent_sdlc.graph import build_graph
+    app = build_graph()
+    edges = {(e.source, e.target) for e in app.get_graph().edges}
+    assert {("ship", "release"), ("release", "code"), ("release", "__end__")} <= edges
+    assert not app.interrupt_before_nodes  # release_node pauses itself via interrupt()
+
+
+# ---------- subprocess output decoding ----------
+def test_git_decodes_utf8_output_regardless_of_windows_codepage(tmp_path, monkeypatch):
+    import importlib
+    cn = importlib.import_module("multi_agent_sdlc.nodes.code_node")
+    monkeypatch.setattr(cn, "WORKSPACE", tmp_path)
+    text = "Mật khẩu “đúng”\n"  # “ ” encode to bytes cp1252 can't decode (0x9d)
+    (tmp_path / "a.txt").write_text(text, encoding="utf-8")
+    cn.git("init", "-q")
+    cn.git("add", "a.txt")
+    cn.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+    assert cn.git("show", "HEAD:a.txt") == text
+
+
+def test_workspace_does_not_depend_on_cwd(tmp_path, monkeypatch):
+    import importlib
+    import multi_agent_sdlc
+    monkeypatch.chdir(tmp_path)  # e.g. running run.py from inside src/multi_agent_sdlc
+    cn = importlib.reload(importlib.import_module("multi_agent_sdlc.nodes.code_node"))
+    assert cn.WORKSPACE == Path(multi_agent_sdlc.__file__).resolve().parents[2] / "workspace"
+
+
+# ---------- sandbox boundary: LLM output must never reach workspace/.git ----------
+# A planted .git/hooks/* or core.fsmonitor in .git/config runs on the host at the next git call.
+@pytest.mark.parametrize("rel", [".git", ".git/config", ".GIT/hooks/post-commit", "tests/../.git/hooks/post-commit"])
+def test_safe_path_rejects_git_dir(rel):
+    with pytest.raises(ValueError):
+        safe_path(rel)
+
+
+def test_generate_tests_only_writes_inside_tests_dir(tmp_path, monkeypatch):
+    import importlib
+    from types import SimpleNamespace
+    cn = importlib.import_module("multi_agent_sdlc.nodes.code_node")
+    tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
+    for m in (cn, tn):
+        monkeypatch.setattr(m, "WORKSPACE", tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "auth.py").write_text("real code", encoding="utf-8")
+    suite = tn.TestSuite(files=[tn.TestFile(path="tests/test_ok.py", content="ok"),
+                                tn.TestFile(path="tests/../src/auth.py", content="overwritten")],
+                         criteria_coverage={})
+    monkeypatch.setattr(tn, "tester_gen", lambda: SimpleNamespace(invoke=lambda _: suite))
+
+    written = tn.generate_tests({"acceptance_criteria": ["c"]})
+
+    assert written == ["tests/test_ok.py"]
+    assert (tmp_path / "src" / "auth.py").read_text(encoding="utf-8") == "real code"
+
+
+def test_pytest_sandbox_mounts_git_dir_read_only(monkeypatch):
+    import importlib
+    tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        raise tn.subprocess.TimeoutExpired(cmd, 1)
+    monkeypatch.setattr(tn.subprocess, "run", fake_run)
+    tn.run_pytest()
+    assert f"{tn.WORKSPACE / '.git'}:/app/.git:ro" in seen["cmd"]
+
+
+# ---------- LLM output budget ----------
+# OmniRoute reports a cut-off tool call as finish_reason=tool_calls with args={}, which surfaces as a
+# misleading "Field required" ValidationError, so every role needs an explicit, generous max_tokens.
+def test_get_llm_sets_generous_default_max_tokens(monkeypatch):
+    from multi_agent_sdlc import llm
+    monkeypatch.setattr(llm, "OMNI_BASE_URL", "http://x")
+    monkeypatch.setattr(llm, "OMNI_API_KEY", "k")
+    monkeypatch.setitem(llm.MODELS, "tester", "m")
+    llm.get_llm.cache_clear()
+    assert llm.get_llm("tester").max_tokens >= 32000
+    llm.get_llm.cache_clear()
+
+
+# ---------- skipped tests must not count as passing ----------
+def test_parse_junit_reports_skipped_tests(tmp_path, monkeypatch):
+    import importlib
+    tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
+    monkeypatch.setattr(tn, "WORKSPACE", tmp_path)
+    (tmp_path / ".report.xml").write_text(
+        '<testsuites><testsuite><testcase classname="tests.test_a" name="test_login">'
+        '<skipped type="pytest.skip" message="AUTH_TEST_ADAPTER missing">reason</skipped>'
+        '</testcase><testcase classname="tests.test_a" name="test_ok"/></testsuite></testsuites>',
+        encoding="utf-8")
+    assert tn.parse_junit() == [{"test": "tests.test_a::test_login", "type": "skipped",
+                                 "message": "AUTH_TEST_ADAPTER missing", "trace": "reason"}]
+
+
+def test_test_node_fails_when_pytest_exits_zero_but_tests_were_skipped(tmp_path, monkeypatch):
+    import importlib
+    from types import SimpleNamespace
+    tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
+    monkeypatch.setattr(tn, "WORKSPACE", tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("", encoding="utf-8")  # existing tests -> no generation
+    skipped = {"test": "tests.test_a::test_login", "type": "skipped", "message": "no adapter", "trace": ""}
+    monkeypatch.setattr(tn, "run_pytest", lambda: {"exit_code": 0, "output": "1 skipped", "failures": [skipped]})
+    triage = tn.FailureTriage(source="test_bug", reasoning="test tự skip", fix_hint="bỏ skip")
+    monkeypatch.setattr(tn, "tester_triage", lambda: SimpleNamespace(invoke=lambda _: triage))
+
+    update = tn.test_node({"acceptance_criteria": ["c"]})
+
+    assert update["tests_passed"] is False
+    assert "[SKIPPED] tests.test_a::test_login" in update["test_report"]
+
+
+# ---------- workspace git ignores test artifacts ----------
+def test_init_workspace_ignores_test_artifacts(tmp_path, monkeypatch):
+    import importlib
+    cn = importlib.import_module("multi_agent_sdlc.nodes.code_node")
+    ws = tmp_path / "workspace"
+    monkeypatch.setattr(cn, "WORKSPACE", ws)
+    cn.init_workspace()
+    for junk in (".coverage", ".report.xml", "src/__pycache__/x.pyc"):
+        (ws / junk).parent.mkdir(parents=True, exist_ok=True)
+        (ws / junk).write_text("x", encoding="utf-8")
+    assert cn.git("status", "--porcelain") == ""
+    assert "base" in cn.git("tag").split()

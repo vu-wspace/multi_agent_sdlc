@@ -40,7 +40,9 @@ TESTER_SYSTEM = """Bạn là QA Engineer. Viết test pytest cho code được c
 - Mỗi acceptance criterion phải có ít nhất 1 test; thêm edge case (input rỗng, sai kiểu, biên).
 - Import từ package src (vd: from src.auth import login).
 - Test độc lập, không gọi mạng, không phụ thuộc thứ tự chạy.
-- Test kiểm tra HÀNH VI theo yêu cầu, không sao chép logic của code."""
+- Test kiểm tra HÀNH VI theo yêu cầu, không sao chép logic của code.
+- Chỉ Python + pytest. Sandbox không có mạng, chỉ có: pytest, pytest-cov, pytest-timeout, bcrypt.
+- KHÔNG dùng pytest.skip / skipif / xfail / importorskip: test bị skip được tính là FAIL."""
 
 # ---------- Sinh test ----------
 def generate_tests(state: SDLCState, fix_hint: str = "") -> list[str]:
@@ -53,9 +55,9 @@ def generate_tests(state: SDLCState, fix_hint: str = "") -> list[str]:
 
     written = []
     for f in suite.files:
-        if not f.path.startswith("tests/"):
-            continue                                   # Tester chỉ được ghi vào tests/
         p = safe_path(f.path)
+        if not p.is_relative_to(WORKSPACE / "tests"):  # so path đã resolve: "tests/../src/x.py" không lọt
+            continue                                   # Tester chỉ được ghi vào tests/
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(f.content, encoding="utf-8")
         written.append(f.path)
@@ -74,6 +76,7 @@ def run_pytest(timeout: int = 120) -> dict:
         "--network", "none",                 # code do LLM viết: không cho ra mạng
         "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
         "-v", f"{WORKSPACE}:/app",
+        "-v", f"{WORKSPACE / '.git'}:/app/.git:ro",  # code trong sandbox không được cài hook lên host
         "sdlc-sandbox",
         "python", "-m", "pytest", "tests", "-q",
         "--timeout=10",                      # mỗi test tối đa 10s (chống vòng lặp vô hạn)
@@ -82,7 +85,7 @@ def run_pytest(timeout: int = 120) -> dict:
         "-p", "no:cacheprovider",
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
         exit_code, output = r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
         exit_code, output = -1, "TIMEOUT: toàn bộ test suite vượt quá thời gian cho phép"
@@ -94,7 +97,7 @@ def parse_junit() -> list[dict]:
         return []
     fails = []
     for case in ET.parse(path).iter("testcase"):
-        for tag in ("failure", "error"):
+        for tag in ("failure", "error", "skipped"):  # skip = criterion chưa được kiểm tra
             node = case.find(tag)
             if node is not None:
                 fails.append({
@@ -123,7 +126,7 @@ def test_node(state: SDLCState) -> dict:
 
     res = run_pytest()
     report = format_report(res)
-    passed = res["exit_code"] == 0
+    passed = res["exit_code"] == 0 and not res["failures"]   # exit 0 vẫn có thể toàn test bị skip
 
     update = {
         "tests_passed": passed,

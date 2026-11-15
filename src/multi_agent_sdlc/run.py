@@ -1,5 +1,10 @@
+import sys
 from langgraph.types import Command
-from graph import build_graph
+from multi_agent_sdlc.graph import build_graph
+
+# Windows: khi stdout là pipe (IDE, redirect, CI) Python dùng cp1252 → ✔ / tiếng Việt gây UnicodeEncodeError
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 app = build_graph()
 config = {"configurable": {"thread_id": "feature-login-001"}, "recursion_limit": 60}

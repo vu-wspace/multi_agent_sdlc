@@ -25,7 +25,10 @@ def planner_structured():
                       .with_retry(stop_after_attempt=2))
 
 PLANNER_SYSTEM = """Bạn là Software Architect. Phân rã yêu cầu thành các task nhỏ, độc lập,
-mỗi task ứng với file cụ thể. Acceptance criteria phải đo được (test được)."""
+mỗi task ứng với file cụ thể. Acceptance criteria phải đo được (test được).
+- Chỉ dùng Python; mọi file nguồn nằm trong src/. Không TypeScript/JavaScript, không DB/server thật.
+- Chỉ dùng thư viện chuẩn và các thư viện có sẵn trong sandbox: bcrypt (test: pytest, pytest-cov).
+- Lưu trữ dùng in-memory (vd: repository dạng dict) để test chạy được không cần hạ tầng."""
 
 def plan_node(state: SDLCState) -> dict:
     user_msg = f"Yêu cầu:\n{state['requirement']}"

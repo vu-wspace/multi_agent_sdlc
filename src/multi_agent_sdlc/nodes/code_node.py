@@ -8,7 +8,7 @@ from ..llm import get_llm
 from functools import cache
 from ..state import SDLCState
 
-WORKSPACE = Path("./workspace").resolve()
+WORKSPACE = Path(__file__).resolve().parents[3] / "workspace"   # <repo>/workspace, không phụ thuộc cwd
 
 # ---------- Schema output ----------
 class FileChange(BaseModel):
@@ -22,7 +22,7 @@ class CodeOutput(BaseModel):
 
 @cache
 def coder_structured():
-    return (get_llm("coder", temperature=0, max_tokens=16000)
+    return (get_llm("coder", temperature=0, max_tokens=64_000)
                     .with_structured_output(CodeOutput, method="function_calling")
                     .with_retry(stop_after_attempt=2))
 
@@ -37,6 +37,10 @@ def safe_path(rel: str) -> Path:
     p = (WORKSPACE / rel).resolve()
     if not p.is_relative_to(WORKSPACE):            # chặn ../../etc/passwd
         raise ValueError(f"Path ngoài workspace: {rel}")
+    # chặn .git: hook / core.fsmonitor do LLM ghi sẽ chạy trên máy host ở lệnh git kế tiếp
+    # (lower(): NTFS không phân biệt hoa thường, .GIT cũng là .git)
+    if p.relative_to(WORKSPACE).parts[:1] and p.relative_to(WORKSPACE).parts[0].lower() == ".git":
+        raise ValueError(f"Không được ghi vào .git: {rel}")
     return p
 
 def read_workspace(max_chars: int = 60_000) -> str:
@@ -64,12 +68,15 @@ def apply_changes(changes: list[FileChange]) -> list[str]:
     return touched
 
 def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=WORKSPACE, capture_output=True, text=True).stdout
+    return subprocess.run(["git", *args], cwd=WORKSPACE, capture_output=True, encoding="utf-8", errors="replace").stdout
 
 def init_workspace():
     WORKSPACE.mkdir(exist_ok=True)
     if not (WORKSPACE / ".git").exists():
-        git("init"); git("commit", "--allow-empty", "-m", "init"); git("tag", "base")
+        # file sinh ra khi chạy test không được lọt vào diff mà Review / Ship đọc
+        (WORKSPACE / ".gitignore").write_text(
+            ".coverage\n.report.xml\n__pycache__/\n*.pyc\n.pytest_cache/\n", encoding="utf-8")
+        git("init"); git("add", ".gitignore"); git("commit", "-m", "init"); git("tag", "base")
 
 # ---------- Node ----------
 def code_node(state: SDLCState) -> dict:

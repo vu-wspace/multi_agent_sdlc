@@ -50,9 +50,9 @@ Quy tắc:
 
 # ---------- Số liệu khách quan ----------
 def run_bandit() -> list[str]:
-    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app",
+    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app:ro",
            "sdlc-sandbox", "bandit", "-r", "src", "-f", "json", "-q"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     try:
         results = json.loads(r.stdout or "{}").get("results", [])
     except json.JSONDecodeError:
