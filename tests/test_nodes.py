@@ -253,3 +253,46 @@ def test_init_workspace_ignores_test_artifacts(tmp_path, monkeypatch):
         (ws / junk).write_text("x", encoding="utf-8")
     assert cn.git("status", "--porcelain") == ""
     assert "base" in cn.git("tag").split()
+
+
+# ---------- review_node prompt ----------
+def test_review_prompt_closes_every_diff_fence(monkeypatch):
+    import importlib, re
+    from types import SimpleNamespace
+    rn = importlib.import_module("multi_agent_sdlc.nodes.review_node")
+    monkeypatch.setattr(rn, "git", lambda *a: "+x = 1\n")
+    monkeypatch.setattr(rn, "run_bandit", lambda: ["[HIGH] B602 shell=True"])
+    seen = {}
+
+    class Captured(Exception):
+        pass
+
+    def invoke(msgs):
+        seen["msg"] = msgs[1].content
+        raise Captured
+    monkeypatch.setattr(rn, "reviewer_structured", lambda: SimpleNamespace(invoke=invoke))
+    state = {"requirement": "r", "diff": "+y = 2\n", "open_review_comments": [{"file": "a.py", "line": 1, "severity": "major", "comment": "c"}]}
+    with pytest.raises(Captured):
+        rn.review_node(state)
+
+    lines = seen["msg"].splitlines()
+    opens = [i for i, l in enumerate(lines) if re.fullmatch(r"`{3,}diff", l)]
+    assert len(opens) == 2
+    for i in opens:
+        fence = lines[i].removesuffix("diff")
+        assert fence in lines[i + 1:], f"fence {fence!r} opened at line {i} is never closed"
+    # bandit findings must be prose, not swallowed by an unclosed code block
+    assert lines.index("## Bandit (security scan)") > max(lines.index(lines[i].removesuffix("diff"), i + 1) for i in opens)
+
+
+# ---------- read_tests ----------
+def test_read_tests_reads_utf8_and_is_capped(tmp_path, monkeypatch):
+    import importlib
+    tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
+    monkeypatch.setattr(tn, "WORKSPACE", tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text('"""Khóa tài khoản — “đúng”"""\n', encoding="utf-8")
+    (tmp_path / "tests" / "test_b.py").write_text("x = 1\n" * 50_000, encoding="utf-8")
+    out = tn.read_tests()
+    assert "Khóa tài khoản — “đúng”" in out
+    assert len(out) <= 60_000

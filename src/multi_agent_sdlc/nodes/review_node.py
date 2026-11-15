@@ -98,7 +98,7 @@ def review_node(state: SDLCState) -> dict:
 {state['requirement']}
 
 ## Diff toàn bộ PR
-``````diff
+`````diff
 {full_diff[-50_000:]}
 `````"""
     if prev_blocking:
@@ -108,9 +108,9 @@ def review_node(state: SDLCState) -> dict:
 {numbered(prev_blocking)}
 
 ## Diff vòng sửa gần nhất
-````diff
+`````diff
 {last_diff[-15_000:]}
-```"""
+`````"""
     if bandit:
         msg += "\n\n## Bandit (security scan)\n" + "\n".join(bandit)
 

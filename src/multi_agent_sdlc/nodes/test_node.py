@@ -65,9 +65,10 @@ def generate_tests(state: SDLCState, fix_hint: str = "") -> list[str]:
     (WORKSPACE / "src" / "__init__.py").touch()
     return written
 
-def read_tests() -> str:
-    return "\n\n".join(f"### {f.relative_to(WORKSPACE)}\n```python\n{f.read_text()}\n```"
+def read_tests(max_chars: int = 60_000) -> str:
+    text = "\n\n".join(f"### {f.relative_to(WORKSPACE)}\n```python\n{f.read_text(encoding='utf-8')}\n```"
                        for f in sorted(WORKSPACE.glob("tests/**/*.py")))
+    return text[:max_chars]  # shortcut: cắt cứng, có thể cụt giữa file; tách theo file nếu LLM bị rối
 
 # ---------- Chạy pytest trong sandbox ----------
 def run_pytest(timeout: int = 120) -> dict:
