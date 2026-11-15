@@ -5,16 +5,16 @@ from dotenv import load_dotenv          # pip install python-dotenv
 
 load_dotenv()
 
-OMNI_BASE_URL = os.environ["OMNIROUTE_BASE_URL"]
-OMNI_API_KEY  = os.environ["OMNIROUTE_API_KEY"]
+OMNI_BASE_URL = os.environ.get("OMNIROUTE_BASE_URL")
+OMNI_API_KEY  = os.environ.get("OMNIROUTE_API_KEY")
 
 MODELS = {
-    "planner":   os.environ["MODEL_PLANNER"],
-    "coder":     os.environ["MODEL_CODER"],
-    "tester":    os.environ["MODEL_TESTER"],
-    "evaluator": os.environ["MODEL_EVALUATOR"],
-    "reviewer":  os.environ["MODEL_REVIEWER"],
-    "shipper":   os.environ["MODEL_SHIPPER"],
+    "planner":   os.environ.get("MODEL_PLANNER"),
+    "coder":     os.environ.get("MODEL_CODER"),
+    "tester":    os.environ.get("MODEL_TESTER"),
+    "evaluator": os.environ.get("MODEL_EVALUATOR"),
+    "reviewer":  os.environ.get("MODEL_REVIEWER"),
+    "shipper":   os.environ.get("MODEL_SHIPPER"),
 }
 
 MAX_ITER = 3

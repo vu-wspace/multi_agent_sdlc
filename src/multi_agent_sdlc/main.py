@@ -1,20 +1,9 @@
-from typing import TypedDict, Literal
+from typing import Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from .config import MAX_ITER
 from .nodes import plan_node, code_node, test_node, evaluate_node, review_node, ship_node
-
-class SDLCState(TypedDict):
-    requirement: str
-    plan: str
-    code: str
-    test_report: str
-    tests_passed: bool
-    eval_score: float
-    review_approved: bool
-    iterations: int
-    release_notes: str
-
-MAX_ITER = 3
+from .state import SDLCState
 
 def after_test(s) -> Literal["evaluate", "code", "__end__"]:
     if s["tests_passed"]: return "evaluate"

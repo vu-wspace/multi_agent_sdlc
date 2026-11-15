@@ -1,7 +1,14 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+import json, subprocess
+from functools import cache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph import END
+from ..config import MAX_ITER
+from ..state import SDLCState
+from .code_node import WORKSPACE, git
 
 # ---------- Schema ----------
 class ReviewComment(BaseModel):
@@ -23,7 +30,9 @@ class Review(BaseModel):
     previous: list[PrevCommentStatus] = Field(default_factory=list,
         description="Trạng thái các comment blocker/major của vòng trước")
 
-reviewer_structured = (get_llm("reviewer", temperature=0)
+@cache
+def reviewer_structured():
+    return (get_llm("reviewer", temperature=0)
                        .with_structured_output(Review, method="function_calling")
                        .with_retry(stop_after_attempt=2))
 
@@ -105,7 +114,7 @@ def review_node(state: SDLCState) -> dict:
     if bandit:
         msg += "\n\n## Bandit (security scan)\n" + "\n".join(bandit)
 
-    review: Review = reviewer_structured.invoke([SystemMessage(REVIEWER_SYSTEM), HumanMessage(msg)])
+    review: Review = reviewer_structured().invoke([SystemMessage(REVIEWER_SYSTEM), HumanMessage(msg)])
 
     # Comment cũ chưa resolved → vẫn chặn
     unresolved_ids = {p.id for p in review.previous if not p.resolved}

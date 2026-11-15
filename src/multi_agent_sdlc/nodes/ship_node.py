@@ -4,7 +4,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt, Command
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+from functools import cache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph import END
+from ..state import SDLCState
+from .code_node import WORKSPACE, git
 
 # ---------- Schema ----------
 class ReleaseInfo(BaseModel):
@@ -16,7 +21,9 @@ class ReleaseInfo(BaseModel):
         description="Theo Keep a Changelog: keys trong Added, Changed, Fixed, Security")
     known_issues: list[str] = Field(default_factory=list)
 
-shipper_structured = (get_llm('shipper', temperature=0.2)
+@cache
+def shipper_structured():
+    return (get_llm('shipper', temperature=0.2)
                       .with_structured_output(ReleaseInfo, method="function_calling")
                       .with_retry(stop_after_attempt=2))
 
@@ -97,7 +104,7 @@ def ship_node(state: SDLCState) -> dict:
 ## Vấn đề còn mở
 {open_issues}"""
 
-    info: ReleaseInfo = shipper_structured.invoke([SystemMessage(SHIPPER_SYSTEM), HumanMessage(msg)])
+    info: ReleaseInfo = shipper_structured().invoke([SystemMessage(SHIPPER_SYSTEM), HumanMessage(msg)])
     version = bump_version(latest_version(), info.bump)
 
     notes = render_release_notes(version, info, state)

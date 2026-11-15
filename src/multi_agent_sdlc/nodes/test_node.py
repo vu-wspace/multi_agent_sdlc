@@ -2,7 +2,14 @@ import xml.etree.ElementTree as ET
 from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+import subprocess
+from functools import cache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph import END
+from ..config import MAX_ITER, MAX_TEST_FIX
+from ..state import SDLCState
+from .code_node import WORKSPACE, safe_path, read_workspace
 
 # ---------- Schema ----------
 class TestFile(BaseModel):
@@ -19,10 +26,14 @@ class FailureTriage(BaseModel):
     reasoning: str
     fix_hint: str = Field(description="Gợi ý sửa ngắn gọn cho bên chịu trách nhiệm")
 
-tester_gen    = (get_llm("tester", temperature=0)
+@cache
+def tester_gen():
+    return (get_llm("tester", temperature=0)
                  .with_structured_output(TestSuite, method="function_calling")
                  .with_retry(stop_after_attempt=2))
-tester_triage = (get_llm("tester", temperature=0)
+@cache
+def tester_triage():
+    return (get_llm("tester", temperature=0)
                  .with_structured_output(FailureTriage, method="function_calling"))
 
 TESTER_SYSTEM = """Bạn là QA Engineer. Viết test pytest cho code được cung cấp.
@@ -38,7 +49,7 @@ def generate_tests(state: SDLCState, fix_hint: str = "") -> list[str]:
     if fix_hint:
         msg += f"\n\n## Test cũ bị sai, sửa theo gợi ý\n{fix_hint}\n\n## Test hiện tại\n{read_tests()}"
 
-    suite: TestSuite = tester_gen.invoke([SystemMessage(TESTER_SYSTEM), HumanMessage(msg)])
+    suite: TestSuite = tester_gen().invoke([SystemMessage(TESTER_SYSTEM), HumanMessage(msg)])
 
     written = []
     for f in suite.files:
@@ -127,7 +138,7 @@ def test_node(state: SDLCState) -> dict:
     if res["exit_code"] == 5:
         triage = FailureTriage(source="test_bug", reasoning="Không collect được test", fix_hint="Kiểm tra tên file test_*.py và import")
     else:
-        triage = tester_triage.invoke([
+        triage = tester_triage().invoke([
             SystemMessage("Phân tích test fail: lỗi do CODE sai yêu cầu hay do TEST viết sai? "
                           "Căn cứ vào acceptance criteria, không căn cứ vào code hiện tại."),
             HumanMessage(f"## Acceptance criteria\n{state['acceptance_criteria']}\n\n## Report\n{report}\n\n"
@@ -142,7 +153,6 @@ def test_node(state: SDLCState) -> dict:
         update["test_report"] = report + f"\n\n## Phân tích của Tester\n{triage.reasoning}\nGợi ý: {triage.fix_hint}"
     return update
 
-MAX_TEST_FIX = 2
 
 def after_test(s) -> Literal["evaluate", "code", "test", "__end__"]:
     if s["tests_passed"]:

@@ -2,7 +2,15 @@ import re, json
 from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+import subprocess
+from functools import cache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph import END
+from ..config import MAX_ITER, MAX_PLAN_REVISIONS
+from ..state import SDLCState
+from .code_node import WORKSPACE, read_workspace
+from .test_node import read_tests
 
 # ---------- Schema ----------
 class CriterionVerdict(BaseModel):
@@ -25,7 +33,9 @@ class Evaluation(BaseModel):
         description="design = plan sai/thiếu, phải lập lại plan; implementation = plan ổn, code chưa đạt")
     feedback: list[str] = Field(description="Danh sách việc cần sửa, cụ thể, ưu tiên từ nặng đến nhẹ")
 
-evaluator_structured = get_llm("evaluator").with_structured_output(Evaluation, method="function_calling")
+@cache
+def evaluator_structured():
+    return get_llm("evaluator").with_structured_output(Evaluation, method="function_calling")
 
 EVALUATOR_SYSTEM = """Bạn là Principal Engineer độc lập đánh giá một deliverable.
 - Đánh giá dựa trên YÊU CẦU và ACCEPTANCE CRITERIA, không dựa trên lời giải thích của người viết code.
@@ -39,7 +49,7 @@ PASS_THRESHOLD = 0.75
 
 # ---------- Số liệu khách quan ----------
 def parse_coverage(report: str) -> int | None:
-    m = re.search(r"^TOTAL\s+\d+\s+\d+\s+(\d+)%", report, re.MULTILINE)
+    m = re.search(r"^TOTAL\s.*?(\d+)%\s*$", report, re.MULTILINE)
     return int(m.group(1)) if m else None
 
 def run_ruff() -> dict:
@@ -99,7 +109,7 @@ def evaluate_node(state: SDLCState) -> dict:
 {chr(10).join(lint['top'])}"""
     # Cố ý KHÔNG đưa code_notes của Coder vào, để tránh bị "thuyết phục" bởi lời tự giải thích
 
-    ev: Evaluation = evaluator_structured.invoke([SystemMessage(EVALUATOR_SYSTEM), HumanMessage(msg)])
+    ev: Evaluation = evaluator_structured().invoke([SystemMessage(EVALUATOR_SYSTEM), HumanMessage(msg)])
     score, gates = compute_score(ev, coverage, lint["count"])
     passed = score >= PASS_THRESHOLD and not gates
 
@@ -113,7 +123,6 @@ def evaluate_node(state: SDLCState) -> dict:
         "plan_revisions": state.get("plan_revisions", 0) + (1 if state.get("eval_feedback") else 0),
     }
 
-MAX_PLAN_REVISIONS = 1
 
 def after_eval(s) -> Literal["review", "plan", "code", "__end__"]:
     if s["eval_passed"]:

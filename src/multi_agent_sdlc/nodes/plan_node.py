@@ -2,7 +2,9 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+from functools import cache
+from ..state import SDLCState
 
 class Task(BaseModel):
     id: str
@@ -16,7 +18,9 @@ class Plan(BaseModel):
     acceptance_criteria: list[str] = Field(description="Tiêu chí kiểm thử được, dùng cho Test & Evaluate")
     risks: list[str]
 
-planner_structured = (get_llm("planner", temperature=0.2)
+@cache
+def planner_structured():
+    return (get_llm("planner", temperature=0.2)
                       .with_structured_output(Plan, method="function_calling")
                       .with_retry(stop_after_attempt=2))
 
@@ -30,7 +34,7 @@ def plan_node(state: SDLCState) -> dict:
     if state.get("eval_feedback"):
         user_msg += f"\n\nPlan trước:\n{state['plan']}\n\nFeedback từ Evaluator:\n{state['eval_feedback']}\nHãy sửa plan."
 
-    plan: Plan = planner_structured.invoke([
+    plan: Plan = planner_structured().invoke([
         SystemMessage(PLANNER_SYSTEM),
         HumanMessage(user_msg),
     ])

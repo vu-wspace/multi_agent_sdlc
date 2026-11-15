@@ -4,7 +4,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from llm import get_llm
+from ..llm import get_llm
+from functools import cache
+from ..state import SDLCState
 
 WORKSPACE = Path("./workspace").resolve()
 
@@ -18,7 +20,9 @@ class CodeOutput(BaseModel):
     changes: list[FileChange]
     notes: str = Field(description="Giải thích ngắn đã làm gì / sửa lỗi gì")
 
-coder_structured = (get_llm("coder", temperature=0, max_tokens=16000)
+@cache
+def coder_structured():
+    return (get_llm("coder", temperature=0, max_tokens=16000)
                     .with_structured_output(CodeOutput, method="function_calling")
                     .with_retry(stop_after_attempt=2))
 
@@ -82,7 +86,7 @@ def code_node(state: SDLCState) -> dict:
     if state.get("eval_feedback") and state.get("eval_target") == "code":
         msg += f"\n\n## Evaluator yêu cầu cải thiện\n{state['eval_feedback']}"
 
-    out: CodeOutput = coder_structured.invoke([SystemMessage(CODER_SYSTEM), HumanMessage(msg)])
+    out: CodeOutput = coder_structured().invoke([SystemMessage(CODER_SYSTEM), HumanMessage(msg)])
 
     touched = apply_changes(out.changes)
     git("add", "-A")
