@@ -1,0 +1,20 @@
+[project]
+name = "multi-agent-sdlc"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Vu Truong Anh", email = "vu.wspace@gmail.com" }
+]
+requires-python = ">=3.13.16"
+dependencies = [
+    "langgraph>=1.2.22",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+multi-agent-sdlc = "multi_agent_sdlc:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
