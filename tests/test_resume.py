@@ -180,3 +180,9 @@ def test_stop_reason_truncates_detail():
     reason = run.stop_reason({"tests_passed": False, "test_report": "\n".join(f"l{i}" for i in range(30))})
     lines = reason.splitlines()
     assert "l19" in lines and "l20" not in lines
+
+
+def test_stop_reason_counts_real_passes_not_budget():
+    # 2 lần reject release trả lại 2 lượt: iterations=5 nhưng thật ra đã code 7 lượt
+    assert "sau 7 lượt code" in run.stop_reason({"tests_passed": False, "iterations": 5, "code_passes": 7})
+    assert "sau 5 lượt code" in run.stop_reason({"tests_passed": False, "iterations": 5})   # checkpoint cũ

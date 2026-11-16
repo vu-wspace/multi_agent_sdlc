@@ -104,6 +104,7 @@ def init_workspace():
 def code_node(state: SDLCState) -> dict:
     init_workspace()
     it = state.get("iterations", 0)
+    passes = state.get("code_passes", 0) + 1   # số lượt thật; iterations bị trả lại khi reject release
 
     msg = f"## Plan\n{state['plan']}\n\n## Code hiện có\n{read_workspace()}"
 
@@ -119,7 +120,7 @@ def code_node(state: SDLCState) -> dict:
 
     touched = apply_changes(out.changes)
     git("add", "-A")
-    git("commit", "-m", f"code iteration {it + 1}")
+    git("commit", "-m", f"code iteration {passes}")
     diff = git("diff", "HEAD~1", "HEAD")
 
     return {
@@ -127,4 +128,5 @@ def code_node(state: SDLCState) -> dict:
         "code_notes": out.notes,
         "diff": diff,                  # node Review sẽ đọc diff thay vì toàn bộ code
         "iterations": it + 1,
+        "code_passes": passes,
     }

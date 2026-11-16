@@ -155,7 +155,7 @@ eval_feedback:
 ...
 ```
 
-Lý do là một trong ba: `test vẫn fail` (in `test_report`), `evaluate chưa đạt` (in `eval_feedback`), `review còn blocker` (in `review_feedback`). Phần này được in ngay vì sau đó không xem lại được: MemorySaver mất khi tắt process, còn checkpoint Postgres thì đã mã hoá. Lưu ý: mỗi lần reject release trả lại 1 lượt, nên con số "sau N lượt" có thể nhỏ hơn số lượt code thật đã chạy.
+Lý do là một trong ba: `test vẫn fail` (in `test_report`), `evaluate chưa đạt` (in `eval_feedback`), `review còn blocker` (in `review_feedback`). Phần này được in ngay vì sau đó không xem lại được: MemorySaver mất khi tắt process, còn checkpoint Postgres thì đã mã hoá. Con số "sau N lượt" là số lượt code thật (`code_passes`), kể cả các lượt được trả lại khi reject release, nên có thể lớn hơn `MAX_ITER`.
 
 Thread release xong thì checkpoint bị xoá. Thread dừng vì lỗi hoặc hết lượt thì được giữ lại để xem. Xoá một thread bằng tay:
 

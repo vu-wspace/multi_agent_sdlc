@@ -167,6 +167,8 @@ def test_reject_goes_back_to_code_and_drops_release_commit(pipe):
     assert path[:2] == ["release", "code"] and path[-1] == "<chờ duyệt>"
     assert sha not in pipe.git("log", "--format=%H")               # commit release bị bỏ
     assert pipe.git("tag", "-l").split() == ["base"]
+    st = pipe.state()
+    assert st["code_passes"] == pipe.code_calls == 2 and st["iterations"] == 1   # reject trả lại lượt, số thật vẫn tăng
     assert pipe.resume(approved=True) == ["release"]
     assert pipe.state()["released"]
 

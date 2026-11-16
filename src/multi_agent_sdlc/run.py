@@ -87,7 +87,8 @@ def stop_reason(v: dict) -> str | None:
         why, field = "review còn blocker", "review_feedback"
     # in luôn chi tiết: MemorySaver mất khi thoát, Postgres thì bị mã hoá → không xem lại được từ checkpoint
     detail = "\n".join((v.get(field) or "(trống)").splitlines()[:20])
-    return f"Dừng trước release: {why} sau {v.get('iterations')} lượt code (MAX_ITER={MAX_ITER})\n{field}:\n{detail}"
+    passes = v.get("code_passes", v.get("iterations"))   # checkpoint cũ chưa có code_passes
+    return f"Dừng trước release: {why} sau {passes} lượt code (MAX_ITER={MAX_ITER})\n{field}:\n{detail}"
 
 def show_payload(payload: dict) -> None:
     print("\n" + "=" * 60 + f"\n{payload['message']}\n")
