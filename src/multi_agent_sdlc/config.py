@@ -7,6 +7,7 @@ load_dotenv()
 
 OMNI_BASE_URL = os.environ.get("OMNIROUTE_BASE_URL")
 OMNI_API_KEY  = os.environ.get("OMNIROUTE_API_KEY")
+POSTGRES_URI  = os.environ.get("POSTGRES_URI")   # không đặt → dùng MemorySaver
 
 MODELS = {
     "planner":   os.environ.get("MODEL_PLANNER"),

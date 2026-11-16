@@ -1,4 +1,5 @@
 import sys
+import uuid
 from langgraph.types import Command
 from multi_agent_sdlc.graph import build_graph
 
@@ -7,7 +8,10 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 app = build_graph()
-config = {"configurable": {"thread_id": "feature-login-001"}, "recursion_limit": 60}
+# thread mới mỗi lần chạy: checkpoint Postgres sống qua các lần chạy, dùng lại id cũ sẽ kế thừa iterations/state cũ
+thread_id = f"feature-login-{uuid.uuid4().hex[:8]}"
+print("thread_id:", thread_id)
+config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}
 
 def run(inp):
     for event in app.stream(inp, config, stream_mode="updates"):

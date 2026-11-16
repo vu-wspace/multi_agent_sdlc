@@ -296,3 +296,25 @@ def test_read_tests_reads_utf8_and_is_capped(tmp_path, monkeypatch):
     out = tn.read_tests()
     assert "Khóa tài khoản — “đúng”" in out
     assert len(out) <= 60_000
+
+
+# ---------- checkpointer ----------
+def test_checkpointer_uses_postgres_when_uri_set(monkeypatch):
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from multi_agent_sdlc import graph
+    calls = {}
+    monkeypatch.setattr(graph, "POSTGRES_URI", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setattr(graph.Connection, "connect", lambda uri, **kw: calls.setdefault("conn", (uri, kw)) and object())
+    monkeypatch.setattr(PostgresSaver, "setup", lambda self: calls.setdefault("setup", True))
+    saver = graph.make_checkpointer()
+    assert isinstance(saver, PostgresSaver)
+    assert calls["conn"][0] == "postgresql://u:p@localhost:5432/db"
+    assert calls["conn"][1]["autocommit"] is True  # setup() chạy CREATE INDEX CONCURRENTLY, không được nằm trong transaction
+    assert calls["setup"]
+
+
+def test_checkpointer_falls_back_to_memory_without_uri(monkeypatch):
+    from langgraph.checkpoint.memory import MemorySaver
+    from multi_agent_sdlc import graph
+    monkeypatch.setattr(graph, "POSTGRES_URI", None)
+    assert isinstance(graph.make_checkpointer(), MemorySaver)
