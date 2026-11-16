@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..config import MAX_ITER
 from ..llm import structured
 from ..state import SDLCState
-from .code_node import WORKSPACE, git
+from .code_node import DOCKER_FAILED, SANDBOX, WORKSPACE, git
 
 
 # ---------- Schema ----------
@@ -51,11 +51,11 @@ Quy tắc:
 
 # ---------- Số liệu khách quan ----------
 def run_bandit() -> list[str]:
-    cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
-           "-v", f"{WORKSPACE}:/app:ro",
-           "sdlc-sandbox", "bandit", "-r", "src", "-f", "json", "-q"]
+    cmd = [*SANDBOX, "-v", f"{WORKSPACE}:/app:ro",
+           "sdlc-sandbox", "bandit", "-r", "src", "-f", "json", "-q",
+           "--ignore-nosec"]            # Coder không được tự che lỗi bằng # nosec
     r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
-    if r.returncode >= 125:   # 125-127 = docker run hỏng; đừng coi là "không có lỗi"
+    if r.returncode in DOCKER_FAILED:   # đừng coi là "không có lỗi"
         raise RuntimeError(f"Docker không chạy được bandit: {r.stderr.strip()[:300]}")
     try:
         results = json.loads(r.stdout or "{}").get("results", [])

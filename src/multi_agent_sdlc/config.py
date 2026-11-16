@@ -13,7 +13,11 @@ load_dotenv()
 
 OMNI_BASE_URL = os.environ.get("OMNIROUTE_BASE_URL")
 OMNI_API_KEY  = os.environ.get("OMNIROUTE_API_KEY")
-POSTGRES_URI  = os.environ.get("POSTGRES_URI")   # không đặt → dùng MemorySaver
+def postgres_uri() -> str | None:
+    """POSTGRES_URI, hoặc DATABASE_URL (tên quen dùng); không đặt → MemorySaver."""
+    return os.environ.get("POSTGRES_URI") or os.environ.get("DATABASE_URL")
+
+POSTGRES_URI  = postgres_uri()
 
 MODELS = {
     "planner":   os.environ.get("MODEL_PLANNER"),

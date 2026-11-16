@@ -25,6 +25,38 @@ from .nodes.test_node import after_test
 from .state import SDLCState
 
 
+class Boxed:
+    """Bọc str/int/bool/None để PostgresSaver không inline chúng vào JSONB (chỗ đó không qua serde, không mã hoá)."""
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+class StrictEncryptedSerializer(EncryptedSerializer):
+    """Đã bật mã hoá thì không tin dòng plaintext (vd ai đó ghi thẳng vào DB một release_sha giả)."""
+    def dumps_typed(self, obj):
+        return super().dumps_typed(obj.value if isinstance(obj, Boxed) else obj)
+
+    def loads_typed(self, data):
+        if "+" not in data[0]:
+            raise ValueError(f"Checkpoint không mã hoá ({data[0]}) trong khi đã bật LANGGRAPH_AES_KEY")
+        return super().loads_typed(data)
+
+class EncryptedPostgresSaver(PostgresSaver):
+    """langgraph lưu giá trị nguyên thuỷ thẳng vào cột JSONB → bỏ qua mã hoá. Ép mọi channel qua bảng blob."""
+    def put(self, config, checkpoint, metadata, new_versions):
+        cv = {k: Boxed(v) if v is None or isinstance(v, (str, int, float, bool)) else v
+              for k, v in checkpoint["channel_values"].items()}
+        return super().put(config, {**checkpoint, "channel_values": cv}, metadata, new_versions)
+
+def make_serde():
+    if os.environ.get("LANGGRAPH_AES_KEY"):   # 16/24/32 ký tự; sai độ dài → ValueError ngay lúc khởi động
+        return StrictEncryptedSerializer.from_pycryptodome_aes()
+    if os.environ.get("LANGGRAPH_ALLOW_PLAINTEXT") == "1":
+        return None
+    raise RuntimeError("Đã đặt POSTGRES_URI/DATABASE_URL nhưng thiếu LANGGRAPH_AES_KEY: checkpoint sẽ lưu plaintext. "
+                       "Đặt khoá, hoặc LANGGRAPH_ALLOW_PLAINTEXT=1 nếu chấp nhận")
+
 def needs_setup(conn) -> bool:
     """Schema checkpoint thiếu hoặc cũ hơn bản langgraph đang cài; nếu đủ thì role runtime không cần quyền CREATE."""
     if conn.execute("SELECT to_regclass('checkpoint_migrations') AS t").fetchone()["t"] is None:
@@ -35,12 +67,11 @@ def needs_setup(conn) -> bool:
 def make_checkpointer():
     if not POSTGRES_URI:
         return MemorySaver()                 # test / chạy thử không cần DB
+    serde = make_serde()                     # lỗi khoá báo trước khi tốn công kết nối
     # autocommit + dict_row là bắt buộc với PostgresSaver; conn sống suốt process
     conn = Connection.connect(POSTGRES_URI, autocommit=True, prepare_threshold=0, row_factory=dict_row,
                               connect_timeout=5)   # DB tắt / sai URI → báo lỗi sau 5s thay vì treo
-    # LANGGRAPH_AES_KEY (16/24/32 byte) → mã hoá state trong DB; không đặt thì lưu plaintext
-    serde = EncryptedSerializer.from_pycryptodome_aes() if os.environ.get("LANGGRAPH_AES_KEY") else None
-    saver = PostgresSaver(conn, serde=serde)
+    saver = (EncryptedPostgresSaver if serde else PostgresSaver)(conn, serde=serde)
     if needs_setup(conn):
         saver.setup()                        # DDL: chỉ lần đầu / sau khi nâng langgraph (cần quyền CREATE)
     return saver
@@ -53,7 +84,8 @@ def checked(fn):
     def node(state):
         out = fn(state)
         update = out.update if isinstance(out, Command) else out
-        bad = set(update or {}) - STATE_KEYS
+        keys = [k for k, _ in update] if isinstance(update, (list, tuple)) else list(update or {})
+        bad = set(keys) - STATE_KEYS
         if bad:
             raise KeyError(f"{fn.__name__} trả về key chưa khai báo trong SDLCState: {sorted(bad)}")
         return out

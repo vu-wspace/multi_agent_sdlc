@@ -77,24 +77,6 @@ def test_changelog_entry_uses_given_date():
     assert sn.render_changelog_entry("v1.0.0", info, today=date(2026, 1, 2)).startswith("## [v1.0.0] - 2026-01-02")
 
 
-# ---------- hai process cùng thread ----------
-def test_lock_is_noop_for_memory_saver():
-    assert run.lock_thread(SimpleNamespace(checkpointer=MemorySaver()), "t") is True
-
-
-def test_lock_uses_postgres_advisory_lock(monkeypatch):
-    from langgraph.checkpoint.postgres import PostgresSaver
-    seen = {}
-
-    class Conn:
-        def execute(self, sql, params):
-            seen["sql"], seen["params"] = sql, params
-            return SimpleNamespace(fetchone=lambda: {"locked": False})
-    saver = PostgresSaver.__new__(PostgresSaver); saver.conn = Conn()
-    assert run.lock_thread(SimpleNamespace(checkpointer=saver), "run-abc") is False
-    assert "pg_try_advisory_lock" in seen["sql"] and seen["params"] == ("run-abc",)
-
-
 # ---------- dọn thread sau khi release ----------
 def test_finish_deletes_released_thread_only():
     saver = MemorySaver()
@@ -157,6 +139,7 @@ def test_needs_setup(table, version, expected):
 
 
 def test_checkpointer_skips_setup_when_schema_current(monkeypatch):
+    monkeypatch.setenv("LANGGRAPH_ALLOW_PLAINTEXT", "1")   # test này không kiểm tra mã hoá
     from langgraph.checkpoint.postgres import PostgresSaver
     monkeypatch.setattr(graph, "POSTGRES_URI", "postgresql://u:p@h/db")
     monkeypatch.setattr(graph.Connection, "connect", lambda *a, **kw: object())
@@ -184,7 +167,7 @@ def test_shipper_sees_test_diff(monkeypatch):
     monkeypatch.setattr(sn, "shipper_structured", lambda: SimpleNamespace(invoke=lambda _: (_ for _ in ()).throw(Stop())))
     with pytest.raises(Stop):
         sn.ship_node({"requirement": "r", "plan": "p"})
-    assert "tests" in seen["diff"]
+    assert {"src", "tests"} <= set(seen["diff"])
 
 
 # ---------- model dự phòng khi model chính lỗi API (vd OmniRoute trả 500) ----------

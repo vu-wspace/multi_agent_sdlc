@@ -8,3 +8,5 @@ def _no_real_postgres(monkeypatch):
     monkeypatch.setattr(graph, "POSTGRES_URI", None)
     monkeypatch.setenv("LANGSMITH_TRACING", "false")   # test không gửi trace ra ngoài
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    monkeypatch.delenv("LANGGRAPH_AES_KEY", raising=False)   # test không phụ thuộc khoá trong .env
+    monkeypatch.delenv("LANGGRAPH_ALLOW_PLAINTEXT", raising=False)

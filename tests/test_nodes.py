@@ -204,7 +204,7 @@ def test_pytest_sandbox_mounts_git_dir_read_only(monkeypatch):
     tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
     seen = {}
     def fake_run(cmd, **kw):
-        seen["cmd"] = cmd
+        seen.setdefault("cmd", cmd)
         raise tn.subprocess.TimeoutExpired(cmd, 1)
     monkeypatch.setattr(tn.subprocess, "run", fake_run)
     tn.run_pytest()
@@ -316,6 +316,7 @@ def test_read_tests_reads_utf8_and_is_capped(tmp_path, monkeypatch):
 
 # ---------- checkpointer ----------
 def test_checkpointer_uses_postgres_when_uri_set(monkeypatch):
+    monkeypatch.setenv("LANGGRAPH_ALLOW_PLAINTEXT", "1")   # test này không kiểm tra mã hoá
     from langgraph.checkpoint.postgres import PostgresSaver
 
     from multi_agent_sdlc import graph

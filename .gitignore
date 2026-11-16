@@ -13,3 +13,5 @@ wheels/
 graphify-out/
 workspace/
 workspace.*-2026*/
+.workspace.lock
+.coverage

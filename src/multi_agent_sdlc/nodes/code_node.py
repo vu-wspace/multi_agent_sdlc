@@ -54,10 +54,22 @@ def read_workspace(max_chars: int = 60_000) -> str:
         parts.append(block); total += len(block)
     return "\n\n".join(parts) or "(workspace trống)"
 
+CODER_ALLOWED_FILES = {"README.md", "pyproject.toml"}
+
+def coder_may_write(p: Path) -> bool:
+    """Coder chỉ ghi code nguồn: test thuộc Tester; conftest / config lint có thể dùng để nới cổng chất lượng."""
+    rel = p.relative_to(WORKSPACE)
+    if rel.name == "conftest.py":
+        return False
+    return rel.parts[0] == "src" or rel.as_posix() in CODER_ALLOWED_FILES
+
 def apply_changes(changes: list[FileChange]) -> list[str]:
     touched = []
     for c in changes:
         p = safe_path(c.path)
+        if not coder_may_write(p):
+            touched.append(f"skipped (không được phép): {c.path}")
+            continue
         if c.action == "delete":
             p.unlink(missing_ok=True)
         else:
@@ -66,8 +78,19 @@ def apply_changes(changes: list[FileChange]) -> list[str]:
         touched.append(f"{c.action}: {c.path}")
     return touched
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=WORKSPACE, capture_output=True, encoding="utf-8", errors="replace").stdout
+# ---------- Sandbox Docker cho code do LLM viết ----------
+SANDBOX = ["docker", "run", "--rm",
+           "--network", "none",                                 # không cho ra mạng
+           "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+           "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+           "--user", "1000:1000"]                               # không chạy bằng root
+DOCKER_FAILED = (125, 126, 127)   # docker run hỏng (thiếu image, daemon tắt); 137/139 = OOM/segfault của code sinh ra
+
+def git(*args: str, check: bool = False) -> str:
+    r = subprocess.run(["git", *args], cwd=WORKSPACE, capture_output=True, encoding="utf-8", errors="replace")
+    if check and r.returncode != 0:   # commit/tag/reset lỗi mà im lặng = release giả hoặc mất code
+        raise RuntimeError(f"git {' '.join(args[:1])} thất bại ({r.returncode}): {r.stderr.strip()[:300]}")
+    return r.stdout
 
 def init_workspace():
     WORKSPACE.mkdir(exist_ok=True)

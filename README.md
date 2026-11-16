@@ -87,10 +87,14 @@ MODEL_TESTER=...
 MODEL_EVALUATOR=...
 MODEL_REVIEWER=...
 MODEL_SHIPPER=...
-# tuỳ chọn: lưu checkpoint vào Postgres (bỏ trống → MemorySaver, mất khi tắt process)
+# tuỳ chọn: lưu checkpoint vào Postgres (bỏ trống → MemorySaver, mất khi tắt process).
+# Đọc POSTGRES_URI, nếu không có thì DATABASE_URL. Database phải được tạo sẵn.
 POSTGRES_URI=postgresql://user:pass@localhost:5432/sdlc
-# tuỳ chọn: mã hoá checkpoint bằng AES (khoá 16/24/32 ký tự); mất khoá = không đọc lại được checkpoint cũ
+# bắt buộc khi dùng Postgres: khoá mã hoá AES (16/24/32 ký tự). Mất khoá = không đọc lại được checkpoint cũ.
+# Sinh khoá: python -c "import secrets; print(secrets.token_urlsafe(24))"
 LANGGRAPH_AES_KEY=...
+# chỉ khi thật sự chấp nhận lưu state plaintext:
+# LANGGRAPH_ALLOW_PLAINTEXT=1
 # tuỳ chọn: gửi trace lên LangSmith (gồm prompt, code sinh ra, diff)
 LANGSMITH_API_KEY=...
 LANGSMITH_TRACING=true
@@ -103,7 +107,17 @@ Postgres:
 - Nên dùng một role riêng, chỉ có quyền trên database này, vì checkpoint chứa toàn bộ state: diff, plan, release notes.
 - Bảng checkpoint chỉ được tạo ở lần chạy đầu tiên, hoặc sau khi nâng cấp langgraph. Chạy lần đầu bằng role admin. Sau đó role chạy hằng ngày chỉ cần quyền `SELECT/INSERT/UPDATE/DELETE` trên các bảng `checkpoint*`.
 
-Python dùng kho chứng chỉ của Windows/OS (thư viện `truststore`), nên LangSmith và OmniRoute vẫn kết nối được khi mạng công ty kiểm tra HTTPS bằng CA nội bộ.
+Mã hoá checkpoint:
+
+- Khi dùng Postgres mà thiếu `LANGGRAPH_AES_KEY`, chương trình từ chối chạy, trừ khi bạn đặt `LANGGRAPH_ALLOW_PLAINTEXT=1`.
+- Mã hoá phủ **mọi** giá trị state, kể cả chuỗi và số. Mặc định langgraph lưu thẳng các giá trị này vào cột JSONB mà không mã hoá, nên code ép chúng đi qua bảng blob.
+- Khi đã bật khoá, dòng checkpoint không mã hoá sẽ bị từ chối, để không ai cài được state giả qua database.
+
+Dữ liệu ra khỏi máy:
+
+- **LangSmith**: khi `LANGSMITH_TRACING=true`, toàn bộ prompt (requirement, `specs/project_context.md`, code, diff, kết quả test, REVIEW.md) được gửi lên LangSmith. Bản này **không** được mã hoá AES bảo vệ. Với project nhạy cảm, đặt `LANGSMITH_TRACING=false`, hoặc `LANGSMITH_HIDE_INPUTS=true` và `LANGSMITH_HIDE_OUTPUTS=true`.
+- **`truststore`**: Python dùng kho chứng chỉ của Windows/OS, nên LangSmith và OmniRoute vẫn kết nối được khi mạng công ty kiểm tra HTTPS bằng CA nội bộ. Đây là đánh đổi có chủ ý: proxy công ty đọc được API key và prompt. Hostname vẫn được kiểm tra như bình thường.
+- **Model dự phòng**: chỉ được dùng khi model chính gặp lỗi tạm thời (mất kết nối, timeout, 5xx, 429). Lỗi 400/401/403 hoặc bị content filter chặn thì **không** chuyển, để prompt bị từ chối không bị gửi sang nhà cung cấp khác. Mỗi lần chuyển đều được ghi log. Chỉ khai báo model dự phòng từ nhà cung cấp mà bạn chấp nhận chính sách dữ liệu.
 
 Mỗi `MODEL_<ROLE>` có thể khai báo thêm model dự phòng, cách nhau bằng dấu phẩy, ví dụ `MODEL_EVALUATOR=agy/gemini-3.8-flash-medium,cx/gpt-6.1-sol`. Khi model chính lỗi API (5xx, mất kết nối), pipeline tự chuyển sang model kế tiếp. Lỗi output bị cắt hoặc sai schema thì không chuyển, vì đổi model không giải quyết được.
 
@@ -131,7 +145,13 @@ Script hỏi requirement (nhiều dòng, dòng trống để kết thúc). Nếu
 - Nếu lần trước bị crash giữa chừng (LLM lỗi, Ctrl+C), script chạy tiếp từ node bị dừng.
 - Nếu lần trước đã chạy xong, script tạo thread mới có hậu tố (`run-xxxxxxxx-abcd`). Muốn quay lại một thread có hậu tố thì truyền id của nó: `uv run python -m multi_agent_sdlc.run --thread run-xxxxxxxx-abcd`.
 
-Mỗi thread chỉ được một process chạy tại một thời điểm, nhờ advisory lock của Postgres. Thread release xong thì checkpoint bị xoá. Thread dừng vì lỗi hoặc hết lượt thì được giữ lại để xem.
+Mỗi lần chỉ một run được dùng `workspace/`, nhờ file lock `.workspace.lock` ở thư mục gốc repo. Khoá này áp dụng cho mọi thread và mọi checkpointer. Run thứ hai sẽ thoát kèm thông báo. Hệ điều hành tự nhả khoá khi process chết, nên không có khoá bị treo.
+
+Thread release xong thì checkpoint bị xoá. Thread dừng vì lỗi hoặc hết lượt thì được giữ lại để xem. Xoá một thread bằng tay:
+
+```bash
+uv run python -m multi_agent_sdlc.run --purge run-xxxxxxxx
+```
 
 Lúc approve hoặc reject, `release_node` kiểm tra HEAD của `workspace/` còn đúng commit release lúc chuẩn bị không. Nếu đã có run khác commit chồng lên, nó dừng lại, không tag và không reset.
 
@@ -175,8 +195,12 @@ Trong script, thêm `sys.path.insert(0, "/app")` trước khi import `src...`.
 
 - `safe_path` chặn mọi đường dẫn đi ra ngoài `workspace/` và chặn ghi vào `.git`, vì một hook do LLM ghi vào đó sẽ chạy trên máy thật.
 - Tester chỉ được ghi vào `workspace/tests/`.
-- pytest, ruff và bandit chạy với `--network none` và giới hạn tài nguyên `--memory 512m --cpus 1 --pids-limit 128`. `.git` được mount ở chế độ chỉ đọc.
-- Docker không chạy được (exit 125–127, ví dụ thiếu image hoặc daemon tắt) thì pipeline dừng và báo lỗi. Nó không coi đó là test fail hay "không có lỗi bảo mật".
+- Coder chỉ được ghi `src/**`, `README.md` và `pyproject.toml`, và không được ghi `conftest.py`. File ngoài danh sách bị bỏ qua và ghi vào `code_files`.
+- LLM không tự nới được cổng chất lượng: ruff chạy `--isolated` (bỏ qua config trong workspace), bandit chạy `--ignore-nosec`, pytest chạy `-o addopts=`.
+- pytest, ruff và bandit chạy với `--network none --memory 512m --cpus 1 --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --user 1000:1000`. `.git` được mount ở chế độ chỉ đọc.
+- pytest bị timeout thì container bị `docker rm -f`, để code của LLM không chạy tiếp. `.report.xml` cũ bị xoá trước mỗi lần chạy.
+- Docker không chạy được (exit 125–127, ví dụ thiếu image hoặc daemon tắt) thì pipeline dừng và báo lỗi. Exit 137/139, tức code sinh ra bị kill vì hết bộ nhớ hoặc segfault, được tính là test fail và gửi về Coder.
+- `git commit`, `git tag` và `git reset` ở bước ship/release lỗi thì pipeline dừng, không báo release thành công giả.
 - ruff bỏ qua nhóm luật `EXE`, vì Docker Desktop trên Windows mount mọi file thành `0777` và sinh lỗi EXE002 giả.
 - Trước khi approve hoặc reject, `release_node` kiểm tra HEAD của `workspace/` còn đúng `release_sha`, để không tag nhầm hoặc xoá commit của run khác.
 

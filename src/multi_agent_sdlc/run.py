@@ -1,10 +1,11 @@
 import argparse
 import hashlib
+import os
 import sys
 import uuid
 from pathlib import Path
 
-from langgraph.checkpoint.postgres import PostgresSaver
+import psycopg
 from langgraph.types import Command
 
 from multi_agent_sdlc.graph import build_graph
@@ -14,6 +15,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 CONTEXT_FILE = Path(__file__).resolve().parents[2] / "specs" / "project_context.md"   # <repo>/specs, không phụ thuộc cwd
+LOCK_FILE = Path(__file__).resolve().parents[2] / ".workspace.lock"   # ngoài workspace/ để không lọt vào git add -A
+_workspace_lock = None   # giữ handle đến hết process
 MAX_CONTEXT = 20_000   # file được lưu vào mọi checkpoint và gửi cho LLM: không để secret trong đó
 
 def ask_requirement() -> str:
@@ -47,13 +50,24 @@ def prepare_thread(app, requirement: str, thread_id: str | None = None) -> tuple
         config["configurable"]["thread_id"] = f"{thread_id}-{uuid.uuid4().hex[:4]}"
     return config, "fresh"
 
-def lock_thread(app, thread_id: str) -> bool:
-    """Giữ advisory lock Postgres cho thread đến hết process; False nếu process khác đang chạy thread này."""
-    cp = app.checkpointer
-    if not isinstance(cp, PostgresSaver):
-        return True                                       # MemorySaver: state riêng từng process
-    row = cp.conn.execute("SELECT pg_try_advisory_lock(hashtext(%s)) AS locked", (thread_id,)).fetchone()
-    return row["locked"]
+def lock_workspace(path: Path = LOCK_FILE):
+    """Khoá độc quyền cho workspace/ (dùng chung mọi thread, mọi checkpointer). None nếu run khác đang giữ.
+
+    OS tự nhả khoá khi process chết, nên không có khoá "treo" sau crash.
+    """
+    f = open(path, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
 
 def finish(app, config) -> None:
     """Release xong thì xoá checkpoint (chứa diff, plan...); thread dừng vì lỗi / hết lượt thì giữ để xem lại."""
@@ -76,11 +90,36 @@ def run(app, inp, config) -> bool:
 def main():
     ap = argparse.ArgumentParser(description="Chạy pipeline SDLC")
     ap.add_argument("--thread", help="thread_id cần chạy tiếp (in ra ở lần chạy trước)")
+    ap.add_argument("--purge", metavar="THREAD", help="xoá checkpoint của một thread (crash / hết lượt / bỏ dở)")
     args = ap.parse_args()
 
-    app = build_graph()
+    try:
+        app = build_graph()
+    except psycopg.OperationalError as e:
+        reason = str(e).strip().splitlines()[-1]
+        sys.exit(f"Không kết nối được Postgres (POSTGRES_URI/DATABASE_URL trong .env): {reason}\n"
+                 "→ tạo database / bật server, hoặc bỏ biến đó để dùng MemorySaver")
     print("checkpointer:", type(app.checkpointer).__name__)
 
+    if args.purge:
+        app.checkpointer.delete_thread(args.purge)
+        print(f"Đã xoá checkpoint của thread {args.purge}")
+        return
+
+    global _workspace_lock
+    _workspace_lock = lock_workspace(LOCK_FILE)
+    if _workspace_lock is None:
+        sys.exit("workspace/ đang được một run khác dùng (xem .workspace.lock); đợi run đó xong rồi chạy lại")
+    try:
+        drive(app, args)
+    except (EOFError, KeyboardInterrupt):   # Ctrl+Z / Ctrl+C khi đang nhập: thread vẫn còn trong checkpoint
+        sys.exit("\nĐã dừng. Chạy lại cùng requirement (hoặc --thread <id>) để tiếp tục.")
+    finally:
+        _workspace_lock.close()
+        _workspace_lock = None
+
+def drive(app, args) -> None:
+    """Chạy / chạy tiếp / duyệt một thread; gọi khi đang giữ khoá workspace."""
     requirement = ""
     if args.thread:
         config, mode = prepare_thread(app, "", args.thread)
@@ -90,8 +129,6 @@ def main():
         requirement = ask_requirement()
         config, mode = prepare_thread(app, requirement)
     thread_id = config["configurable"]["thread_id"]
-    if not lock_thread(app, thread_id):
-        sys.exit(f"thread {thread_id} đang được chạy ở process khác")
 
     if mode == "approve":
         print(f"\nthread_id = {thread_id} đang chờ duyệt release, tiếp tục từ đó.")

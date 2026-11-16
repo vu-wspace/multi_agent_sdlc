@@ -110,7 +110,7 @@ def ship_node(state: SDLCState) -> dict:
     notes = render_release_notes(version, info, state)
     (WORKSPACE / "RELEASE_NOTES.md").write_text(notes, encoding="utf-8")
     update_changelog(render_changelog_entry(version, info))
-    git("add", "-A"); git("commit", "-m", f"chore(release): {version}")
+    git("add", "-A"); git("commit", "-m", f"chore(release): {version}", check=True)
 
     return {"version": version, "release_notes": notes, "release_sha": git("rev-parse", "HEAD").strip()}
 
@@ -123,17 +123,19 @@ def release_node(state: SDLCState) -> Command[Literal["code", "__end__"]]:
     })
 
     # checkpoint Postgres sống qua nhiều process, workspace/ thì dùng chung: run khác có thể đã commit chồng lên
-    sha = state["release_sha"]
+    sha = state.get("release_sha")
+    if not sha:   # thread chờ duyệt từ trước khi có release_sha
+        raise RuntimeError("State thiếu release_sha (thread tạo bởi bản cũ): chạy lại requirement để ship lại")
     if git("rev-parse", "HEAD").strip() != sha:
         raise RuntimeError(f"workspace HEAD đã đổi kể từ khi chuẩn bị release {state['version']} ({sha[:8]}); "
                            "không tag / reset để tránh nhầm hoặc mất commit")
 
     if decision.get("approved"):
-        git("tag", "-a", state["version"], sha, "-m", f"Release {state['version']}")
+        git("tag", "-a", state["version"], sha, "-m", f"Release {state['version']}", check=True)
         return Command(goto=END, update={"released": True})
 
     # Từ chối: hủy commit release, quay lại Code với feedback của người duyệt
-    git("reset", "--hard", f"{sha}~1")
+    git("reset", "--hard", f"{sha}~1", check=True)
     return Command(goto="code", update={
         "released": False,
         "review_approved": False,

@@ -1,4 +1,5 @@
 import subprocess
+import uuid
 import xml.etree.ElementTree as ET
 from functools import cache
 from typing import Literal
@@ -10,7 +11,7 @@ from pydantic import BaseModel, Field
 from ..config import MAX_ITER, MAX_TEST_FIX
 from ..llm import structured
 from ..state import SDLCState
-from .code_node import WORKSPACE, read_workspace, safe_path
+from .code_node import DOCKER_FAILED, SANDBOX, WORKSPACE, read_workspace, safe_path
 
 
 # ---------- Schema ----------
@@ -71,10 +72,10 @@ def read_tests(max_chars: int = 60_000) -> str:
 
 # ---------- Chạy pytest trong sandbox ----------
 def run_pytest(timeout: int = 120) -> dict:
+    name = f"sdlc-pytest-{uuid.uuid4().hex[:8]}"   # để dọn được container khi timeout
+    (WORKSPACE / ".report.xml").unlink(missing_ok=True)   # report cũ không được tính cho lần chạy này
     cmd = [
-        "docker", "run", "--rm",
-        "--network", "none",                 # code do LLM viết: không cho ra mạng
-        "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+        *SANDBOX, "--name", name,
         "-v", f"{WORKSPACE}:/app",
         "-v", f"{WORKSPACE / '.git'}:/app/.git:ro",  # code trong sandbox không được cài hook lên host
         "sdlc-sandbox",
@@ -83,11 +84,17 @@ def run_pytest(timeout: int = 120) -> dict:
         "--junitxml=/app/.report.xml",
         "--cov=src", "--cov-report=term",
         "-p", "no:cacheprovider",
+        "-o", "addopts=",                    # bỏ addopts trong pyproject của workspace (vd -k / --deselect)
     ]
     try:
         r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
         exit_code, output = r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
+        # timeout chỉ kill docker CLI; container vẫn chạy code LLM trên mount ghi được → xoá hẳn
+        try:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+        except subprocess.SubprocessError:
+            pass   # dọn không được thì container vẫn tự hết khi pytest xong (--rm); không che kết quả TIMEOUT
         exit_code, output = -1, "TIMEOUT: toàn bộ test suite vượt quá thời gian cho phép"
     return {"exit_code": exit_code, "output": output, "failures": parse_junit()}
 
@@ -125,7 +132,7 @@ def test_node(state: SDLCState) -> dict:
         generate_tests(state, fix_hint=state.get("test_fix_hint", ""))
 
     res = run_pytest()
-    if res["exit_code"] >= 125:   # 125-127 = docker run hỏng (thiếu image, daemon tắt): không phải lỗi test/code
+    if res["exit_code"] in DOCKER_FAILED:   # không phải lỗi test/code
         raise RuntimeError(f"Docker không chạy được pytest: {res['output'].strip()[:300]}")
     report = format_report(res)
     passed = res["exit_code"] == 0 and not res["failures"]   # exit 0 vẫn có thể toàn test bị skip

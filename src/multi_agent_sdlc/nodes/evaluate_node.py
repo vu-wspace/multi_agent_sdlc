@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from ..config import MAX_ITER, MAX_PLAN_REVISIONS
 from ..llm import structured
 from ..state import SDLCState
-from .code_node import WORKSPACE, read_workspace
+from .code_node import DOCKER_FAILED, SANDBOX, WORKSPACE, read_workspace
 from .test_node import read_tests
 
 
@@ -56,12 +56,12 @@ def parse_coverage(report: str) -> int | None:
     return int(m.group(1)) if m else None
 
 def run_ruff() -> dict:
-    cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
-           "-v", f"{WORKSPACE}:/app:ro",
+    cmd = [*SANDBOX, "-v", f"{WORKSPACE}:/app:ro",
            "sdlc-sandbox", "ruff", "check", "src", "--output-format", "json", "--no-cache",
-           "--extend-ignore", "EXE"]   # mount Windows làm mọi file 0777 → EXE002 giả
+           "--isolated",                # bỏ ruff config trong workspace: Coder không được tự tắt rule
+           "--extend-ignore", "EXE"]    # mount Windows làm mọi file 0777 → EXE002 giả
     r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
-    if r.returncode >= 125:   # 125-127 = docker run hỏng; đừng coi là "không có lỗi"
+    if r.returncode in DOCKER_FAILED:   # đừng coi là "không có lỗi"
         raise RuntimeError(f"Docker không chạy được ruff: {r.stderr.strip()[:300]}")
     try:
         issues = json.loads(r.stdout or "[]")
