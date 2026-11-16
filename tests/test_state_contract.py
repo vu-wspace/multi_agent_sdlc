@@ -54,6 +54,7 @@ def test_contract_scan_sees_known_keys():
 
 def test_graph_uses_node_routers():
     from importlib import import_module
+
     from multi_agent_sdlc import graph
     # import_module: nodes/__init__ shadows these module names with the node functions
     mod = lambda name: import_module(f"multi_agent_sdlc.nodes.{name}")

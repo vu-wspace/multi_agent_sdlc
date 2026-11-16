@@ -5,6 +5,7 @@ from typing import TypedDict
 # declared here, or LangGraph silently drops it (guarded by tests/test_state_contract.py).
 class SDLCState(TypedDict, total=False):
     requirement: str
+    project_context: str          # specs/project_context.md, run.py nạp vào
     # plan
     plan: str
     acceptance_criteria: list[str]
@@ -35,4 +36,5 @@ class SDLCState(TypedDict, total=False):
     # ship / release
     version: str
     release_notes: str
+    release_sha: str              # commit release mà người duyệt được xem
     released: bool

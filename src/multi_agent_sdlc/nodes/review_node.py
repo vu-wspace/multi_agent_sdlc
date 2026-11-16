@@ -1,14 +1,17 @@
-from typing import Literal
-from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
-import json, subprocess
+import json
+import subprocess
 from functools import cache
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
+from pydantic import BaseModel, Field
+
 from ..config import MAX_ITER
+from ..llm import structured
 from ..state import SDLCState
 from .code_node import WORKSPACE, git
+
 
 # ---------- Schema ----------
 class ReviewComment(BaseModel):
@@ -32,9 +35,7 @@ class Review(BaseModel):
 
 @cache
 def reviewer_structured():
-    return (get_llm("reviewer", temperature=0)
-                       .with_structured_output(Review, method="function_calling")
-                       .with_retry(stop_after_attempt=2))
+    return structured("reviewer", Review)
 
 REVIEWER_SYSTEM = """Bạn là Staff Engineer review Pull Request.
 Mức độ:
@@ -50,9 +51,12 @@ Quy tắc:
 
 # ---------- Số liệu khách quan ----------
 def run_bandit() -> list[str]:
-    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app:ro",
+    cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+           "-v", f"{WORKSPACE}:/app:ro",
            "sdlc-sandbox", "bandit", "-r", "src", "-f", "json", "-q"]
     r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+    if r.returncode >= 125:   # 125-127 = docker run hỏng; đừng coi là "không có lỗi"
+        raise RuntimeError(f"Docker không chạy được bandit: {r.stderr.strip()[:300]}")
     try:
         results = json.loads(r.stdout or "{}").get("results", [])
     except json.JSONDecodeError:

@@ -5,9 +5,23 @@ import pytest
 
 from multi_agent_sdlc.nodes.code_node import WORKSPACE, safe_path
 from multi_agent_sdlc.nodes.evaluate_node import (
-    CriterionVerdict, DimensionScore, Evaluation, after_eval, compute_score, parse_coverage)
-from multi_agent_sdlc.nodes.review_node import ReviewComment, after_review, format_feedback
-from multi_agent_sdlc.nodes.ship_node import ReleaseInfo, bump_version, render_changelog_entry
+    CriterionVerdict,
+    DimensionScore,
+    Evaluation,
+    after_eval,
+    compute_score,
+    parse_coverage,
+)
+from multi_agent_sdlc.nodes.review_node import (
+    ReviewComment,
+    after_review,
+    format_feedback,
+)
+from multi_agent_sdlc.nodes.ship_node import (
+    ReleaseInfo,
+    bump_version,
+    render_changelog_entry,
+)
 from multi_agent_sdlc.nodes.test_node import after_test
 
 
@@ -81,8 +95,8 @@ def test_bump_version(cur, bump, expected):
 def test_render_changelog_entry_skips_empty_and_unknown_sections():
     info = ReleaseInfo(bump="minor", title="t", highlights=[],
                        changelog={"Added": ["login"], "Fixed": [], "Other": ["x"]})
-    assert render_changelog_entry("v1.0.0", info) == (
-        f"## [v1.0.0] - {date.today().isoformat()}\n### Added\n- login\n")
+    assert render_changelog_entry("v1.0.0", info, today=date(2026, 1, 2)) == (
+        "## [v1.0.0] - 2026-01-02\n### Added\n- login\n")
 
 
 # ---------- format_feedback ----------
@@ -150,6 +164,7 @@ def test_git_decodes_utf8_output_regardless_of_windows_codepage(tmp_path, monkey
 
 def test_workspace_does_not_depend_on_cwd(tmp_path, monkeypatch):
     import importlib
+
     import multi_agent_sdlc
     monkeypatch.chdir(tmp_path)  # e.g. running run.py from inside src/multi_agent_sdlc
     cn = importlib.reload(importlib.import_module("multi_agent_sdlc.nodes.code_node"))
@@ -257,7 +272,8 @@ def test_init_workspace_ignores_test_artifacts(tmp_path, monkeypatch):
 
 # ---------- review_node prompt ----------
 def test_review_prompt_closes_every_diff_fence(monkeypatch):
-    import importlib, re
+    import importlib
+    import re
     from types import SimpleNamespace
     rn = importlib.import_module("multi_agent_sdlc.nodes.review_node")
     monkeypatch.setattr(rn, "git", lambda *a: "+x = 1\n")
@@ -301,10 +317,15 @@ def test_read_tests_reads_utf8_and_is_capped(tmp_path, monkeypatch):
 # ---------- checkpointer ----------
 def test_checkpointer_uses_postgres_when_uri_set(monkeypatch):
     from langgraph.checkpoint.postgres import PostgresSaver
+
     from multi_agent_sdlc import graph
     calls = {}
     monkeypatch.setattr(graph, "POSTGRES_URI", "postgresql://u:p@localhost:5432/db")
-    monkeypatch.setattr(graph.Connection, "connect", lambda uri, **kw: calls.setdefault("conn", (uri, kw)) and object())
+    def fake_connect(uri, **kw):
+        calls["conn"] = (uri, kw)
+        return object()
+    monkeypatch.setattr(graph.Connection, "connect", fake_connect)
+    monkeypatch.setattr(graph, "needs_setup", lambda conn: True)
     monkeypatch.setattr(PostgresSaver, "setup", lambda self: calls.setdefault("setup", True))
     saver = graph.make_checkpointer()
     assert isinstance(saver, PostgresSaver)
@@ -315,6 +336,31 @@ def test_checkpointer_uses_postgres_when_uri_set(monkeypatch):
 
 def test_checkpointer_falls_back_to_memory_without_uri(monkeypatch):
     from langgraph.checkpoint.memory import MemorySaver
+
     from multi_agent_sdlc import graph
     monkeypatch.setattr(graph, "POSTGRES_URI", None)
     assert isinstance(graph.make_checkpointer(), MemorySaver)
+
+
+# ---------- run.py / project_context ----------
+def test_run_module_imports():
+    import importlib
+    importlib.import_module("multi_agent_sdlc.run")   # chặn import phụ thuộc cwd (vd `from graph import ...`)
+
+
+def test_plan_node_sends_project_context_to_planner(monkeypatch):
+    import importlib
+    from types import SimpleNamespace
+    pn = importlib.import_module("multi_agent_sdlc.nodes.plan_node")
+    seen = {}
+
+    class Captured(Exception):
+        pass
+
+    def invoke(msgs):
+        seen["msg"] = msgs[1].content
+        raise Captured
+    monkeypatch.setattr(pn, "planner_structured", lambda: SimpleNamespace(invoke=invoke))
+    with pytest.raises(Captured):
+        pn.plan_node({"requirement": "r", "project_context": "Dùng FastAPI, Python 3.13"})
+    assert "Dùng FastAPI, Python 3.13" in seen["msg"]

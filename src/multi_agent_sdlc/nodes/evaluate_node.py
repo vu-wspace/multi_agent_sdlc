@@ -1,16 +1,19 @@
-import re, json
-from typing import Literal
-from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
+import json
+import re
 import subprocess
 from functools import cache
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
+from pydantic import BaseModel, Field
+
 from ..config import MAX_ITER, MAX_PLAN_REVISIONS
+from ..llm import structured
 from ..state import SDLCState
 from .code_node import WORKSPACE, read_workspace
 from .test_node import read_tests
+
 
 # ---------- Schema ----------
 class CriterionVerdict(BaseModel):
@@ -35,7 +38,7 @@ class Evaluation(BaseModel):
 
 @cache
 def evaluator_structured():
-    return get_llm("evaluator").with_structured_output(Evaluation, method="function_calling")
+    return structured("evaluator", Evaluation, retries=1)
 
 EVALUATOR_SYSTEM = """Bạn là Principal Engineer độc lập đánh giá một deliverable.
 - Đánh giá dựa trên YÊU CẦU và ACCEPTANCE CRITERIA, không dựa trên lời giải thích của người viết code.
@@ -53,9 +56,13 @@ def parse_coverage(report: str) -> int | None:
     return int(m.group(1)) if m else None
 
 def run_ruff() -> dict:
-    cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{WORKSPACE}:/app:ro",
-           "sdlc-sandbox", "ruff", "check", "src", "--output-format", "json", "--no-cache"]
+    cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+           "-v", f"{WORKSPACE}:/app:ro",
+           "sdlc-sandbox", "ruff", "check", "src", "--output-format", "json", "--no-cache",
+           "--extend-ignore", "EXE"]   # mount Windows làm mọi file 0777 → EXE002 giả
     r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+    if r.returncode >= 125:   # 125-127 = docker run hỏng; đừng coi là "không có lỗi"
+        raise RuntimeError(f"Docker không chạy được ruff: {r.stderr.strip()[:300]}")
     try:
         issues = json.loads(r.stdout or "[]")
     except json.JSONDecodeError:

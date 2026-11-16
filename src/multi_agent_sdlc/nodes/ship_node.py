@@ -1,15 +1,17 @@
 import re
 from datetime import date
-from typing import Literal
-from pydantic import BaseModel, Field
-from langgraph.types import interrupt, Command
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
 from functools import cache
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
+from langgraph.types import Command, interrupt
+from pydantic import BaseModel, Field
+
+from ..llm import structured
 from ..state import SDLCState
 from .code_node import WORKSPACE, git
+
 
 # ---------- Schema ----------
 class ReleaseInfo(BaseModel):
@@ -23,9 +25,7 @@ class ReleaseInfo(BaseModel):
 
 @cache
 def shipper_structured():
-    return (get_llm('shipper', temperature=0.2)
-                      .with_structured_output(ReleaseInfo, method="function_calling")
-                      .with_retry(stop_after_attempt=2))
+    return structured("shipper", ReleaseInfo, temperature=0.2)
 
 SHIPPER_SYSTEM = """Bạn là Release Manager. Viết release notes rõ ràng, trung thực.
 - Chỉ nêu những gì THỰC SỰ có trong diff, không phóng đại.
@@ -50,8 +50,8 @@ def bump_version(cur: tuple[int, int, int], bump: str) -> str:
     return f"v{major}.{minor}.{patch + 1}"
 
 # ---------- File release ----------
-def render_changelog_entry(version: str, info: ReleaseInfo) -> str:
-    lines = [f"## [{version}] - {date.today().isoformat()}"]
+def render_changelog_entry(version: str, info: ReleaseInfo, today: date | None = None) -> str:
+    lines = [f"## [{version}] - {(today or date.today()).isoformat()}"]
     for section in ("Added", "Changed", "Fixed", "Security"):
         items = info.changelog.get(section, [])
         if items:
@@ -95,7 +95,7 @@ def ship_node(state: SDLCState) -> dict:
 
 ## Diff toàn bộ
 ```diff
-{git('diff', 'base', 'HEAD', '--', 'src')[-40_000:]}
+{git('diff', 'base', 'HEAD', '--', 'src', 'tests')[-40_000:]}
 ```
 
 ## Review summary
@@ -112,7 +112,7 @@ def ship_node(state: SDLCState) -> dict:
     update_changelog(render_changelog_entry(version, info))
     git("add", "-A"); git("commit", "-m", f"chore(release): {version}")
 
-    return {"version": version, "release_notes": notes}
+    return {"version": version, "release_notes": notes, "release_sha": git("rev-parse", "HEAD").strip()}
 
 # ---------- Node: release (human-in-the-loop) ----------
 def release_node(state: SDLCState) -> Command[Literal["code", "__end__"]]:
@@ -122,12 +122,18 @@ def release_node(state: SDLCState) -> Command[Literal["code", "__end__"]]:
         "review": (WORKSPACE / "REVIEW.md").read_text(encoding="utf-8"),
     })
 
+    # checkpoint Postgres sống qua nhiều process, workspace/ thì dùng chung: run khác có thể đã commit chồng lên
+    sha = state["release_sha"]
+    if git("rev-parse", "HEAD").strip() != sha:
+        raise RuntimeError(f"workspace HEAD đã đổi kể từ khi chuẩn bị release {state['version']} ({sha[:8]}); "
+                           "không tag / reset để tránh nhầm hoặc mất commit")
+
     if decision.get("approved"):
-        git("tag", "-a", state["version"], "-m", f"Release {state['version']}")
+        git("tag", "-a", state["version"], sha, "-m", f"Release {state['version']}")
         return Command(goto=END, update={"released": True})
 
     # Từ chối: hủy commit release, quay lại Code với feedback của người duyệt
-    git("reset", "--hard", "HEAD~1")
+    git("reset", "--hard", f"{sha}~1")
     return Command(goto="code", update={
         "released": False,
         "review_approved": False,

@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
 from functools import cache
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
+
+from ..llm import structured
 from ..state import SDLCState
+
 
 class Task(BaseModel):
     id: str
@@ -20,9 +21,7 @@ class Plan(BaseModel):
 
 @cache
 def planner_structured():
-    return (get_llm("planner", temperature=0.2)
-                      .with_structured_output(Plan, method="function_calling")
-                      .with_retry(stop_after_attempt=2))
+    return structured("planner", Plan, temperature=0.2)
 
 PLANNER_SYSTEM = """Bạn là Software Architect. Phân rã yêu cầu thành các task nhỏ, độc lập,
 mỗi task ứng với file cụ thể. Acceptance criteria phải đo được (test được).
@@ -32,6 +31,8 @@ mỗi task ứng với file cụ thể. Acceptance criteria phải đo được 
 
 def plan_node(state: SDLCState) -> dict:
     user_msg = f"Yêu cầu:\n{state['requirement']}"
+    if state.get("project_context"):
+        user_msg += f"\n\nBối cảnh dự án:\n{state['project_context']}"
 
     # Nếu đây là vòng plan lại (Evaluate chấm thấp) → đưa feedback vào
     if state.get("eval_feedback"):

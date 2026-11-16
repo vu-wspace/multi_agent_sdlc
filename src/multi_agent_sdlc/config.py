@@ -1,7 +1,13 @@
 # đọc .env, map vai trò → model
 
 import os
-from dotenv import load_dotenv          # pip install python-dotenv
+
+import truststore
+from dotenv import load_dotenv  # pip install python-dotenv
+
+# Dùng kho chứng chỉ của OS thay cho certifi: mạng công ty kiểm tra HTTPS bằng CA nội bộ
+# mà Windows tin còn certifi thì không → LangSmith báo CERTIFICATE_VERIFY_FAILED
+truststore.inject_into_ssl()
 
 load_dotenv()
 

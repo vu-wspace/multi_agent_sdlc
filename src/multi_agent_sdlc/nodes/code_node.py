@@ -1,11 +1,12 @@
 import subprocess
+from functools import cache
 from pathlib import Path
 from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
-from functools import cache
+
+from ..llm import structured
 from ..state import SDLCState
 
 WORKSPACE = Path(__file__).resolve().parents[3] / "workspace"   # <repo>/workspace, không phụ thuộc cwd
@@ -22,9 +23,7 @@ class CodeOutput(BaseModel):
 
 @cache
 def coder_structured():
-    return (get_llm("coder", temperature=0, max_tokens=64_000)
-                    .with_structured_output(CodeOutput, method="function_calling")
-                    .with_retry(stop_after_attempt=2))
+    return structured("coder", CodeOutput, max_tokens=64_000)
 
 CODER_SYSTEM = """Bạn là Senior Software Engineer. Viết code Python sạch, có type hint, chạy được ngay.
 - Chỉ tạo/sửa file thuộc phạm vi plan.

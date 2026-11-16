@@ -1,15 +1,17 @@
-import xml.etree.ElementTree as ET
-from typing import Literal
-from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
-from ..llm import get_llm
 import subprocess
+import xml.etree.ElementTree as ET
 from functools import cache
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
+from pydantic import BaseModel, Field
+
 from ..config import MAX_ITER, MAX_TEST_FIX
+from ..llm import structured
 from ..state import SDLCState
-from .code_node import WORKSPACE, safe_path, read_workspace
+from .code_node import WORKSPACE, read_workspace, safe_path
+
 
 # ---------- Schema ----------
 class TestFile(BaseModel):
@@ -28,13 +30,10 @@ class FailureTriage(BaseModel):
 
 @cache
 def tester_gen():
-    return (get_llm("tester", temperature=0)
-                 .with_structured_output(TestSuite, method="function_calling")
-                 .with_retry(stop_after_attempt=2))
+    return structured("tester", TestSuite)
 @cache
 def tester_triage():
-    return (get_llm("tester", temperature=0)
-                 .with_structured_output(FailureTriage, method="function_calling"))
+    return structured("tester", FailureTriage, retries=1)
 
 TESTER_SYSTEM = """Bạn là QA Engineer. Viết test pytest cho code được cung cấp.
 - Mỗi acceptance criterion phải có ít nhất 1 test; thêm edge case (input rỗng, sai kiểu, biên).
@@ -126,6 +125,8 @@ def test_node(state: SDLCState) -> dict:
         generate_tests(state, fix_hint=state.get("test_fix_hint", ""))
 
     res = run_pytest()
+    if res["exit_code"] >= 125:   # 125-127 = docker run hỏng (thiếu image, daemon tắt): không phải lỗi test/code
+        raise RuntimeError(f"Docker không chạy được pytest: {res['output'].strip()[:300]}")
     report = format_report(res)
     passed = res["exit_code"] == 0 and not res["failures"]   # exit 0 vẫn có thể toàn test bị skip
 

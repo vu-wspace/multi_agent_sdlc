@@ -12,3 +12,4 @@ wheels/
 .env
 graphify-out/
 workspace/
+workspace.*-2026*/
