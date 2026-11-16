@@ -8,6 +8,7 @@ from pathlib import Path
 import psycopg
 from langgraph.types import Command
 
+from multi_agent_sdlc.config import MAX_ITER
 from multi_agent_sdlc.graph import build_graph
 
 # Windows: stdout là pipe thì Python dùng cp1252 → ✔ / tiếng Việt gây UnicodeEncodeError
@@ -73,6 +74,20 @@ def finish(app, config) -> None:
     """Release xong thì xoá checkpoint (chứa diff, plan...); thread dừng vì lỗi / hết lượt thì giữ để xem lại."""
     if app.get_state(config).values.get("released"):
         app.checkpointer.delete_thread(config["configurable"]["thread_id"])
+
+def stop_reason(v: dict) -> str | None:
+    """Thread kết thúc mà chưa release → vì sao (router trả END không để lại dấu vết gì)."""
+    if v.get("released"):
+        return None
+    if not v.get("tests_passed"):
+        why, field = "test vẫn fail", "test_report"
+    elif not v.get("eval_passed"):
+        why, field = "evaluate chưa đạt", "eval_feedback"
+    else:
+        why, field = "review còn blocker", "review_feedback"
+    # in luôn chi tiết: MemorySaver mất khi thoát, Postgres thì bị mã hoá → không xem lại được từ checkpoint
+    detail = "\n".join((v.get(field) or "(trống)").splitlines()[:20])
+    return f"Dừng trước release: {why} sau {v.get('iterations')} lượt code (MAX_ITER={MAX_ITER})\n{field}:\n{detail}"
 
 def show_payload(payload: dict) -> None:
     print("\n" + "=" * 60 + f"\n{payload['message']}\n")
@@ -150,7 +165,10 @@ def drive(app, args) -> None:
             fb = input("Feedback: ")
             waiting = run(app, Command(resume={"approved": False, "feedback": fb}), config)
 
-    print(f"\nDone. Version: {app.get_state(config).values.get('version')}  (thread_id = {thread_id})")
+    values = app.get_state(config).values
+    if reason := stop_reason(values):
+        print(f"\n{reason}")
+    print(f"\nDone. Version: {values.get('version')}  (thread_id = {thread_id})")
     finish(app, config)
 
 if __name__ == "__main__":

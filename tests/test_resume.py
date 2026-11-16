@@ -162,3 +162,21 @@ def test_ship_node_records_release_sha(ws, monkeypatch):
     monkeypatch.setattr(sn, "render_changelog_entry", lambda *a: "entry")
     out = sn.ship_node({"requirement": "r", "plan": "p"})
     assert out["release_sha"] == head()
+
+
+@pytest.mark.parametrize("values,expected", [
+    ({"released": True}, None),
+    ({"tests_passed": False, "iterations": 5}, "test vẫn fail"),
+    ({"tests_passed": True, "eval_passed": False, "eval_feedback": "thiếu edge case"}, "thiếu edge case"),
+    ({"tests_passed": True, "eval_passed": False, "iterations": 5}, "evaluate chưa đạt"),
+    ({"tests_passed": True, "eval_passed": True, "has_blockers": True, "iterations": 5}, "review còn blocker"),
+])
+def test_stop_reason(values, expected):
+    reason = run.stop_reason(values)
+    assert reason is None if expected is None else expected in reason
+
+
+def test_stop_reason_truncates_detail():
+    reason = run.stop_reason({"tests_passed": False, "test_report": "\n".join(f"l{i}" for i in range(30))})
+    lines = reason.splitlines()
+    assert "l19" in lines and "l20" not in lines

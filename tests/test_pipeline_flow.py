@@ -6,6 +6,7 @@ import pytest
 from langgraph.types import Command
 
 from multi_agent_sdlc import graph
+from multi_agent_sdlc.config import MAX_ITER
 
 cn = importlib.import_module("multi_agent_sdlc.nodes.code_node")
 tn = importlib.import_module("multi_agent_sdlc.nodes.test_node")
@@ -173,5 +174,5 @@ def test_reject_goes_back_to_code_and_drops_release_commit(pipe):
 def test_stops_after_max_iterations(pipe):
     pipe.pytest.items = [FAIL]
     path = pipe.run()
-    assert path == ["plan", "code", "test", "code", "test", "code", "test"]   # MAX_ITER = 3, rồi END
+    assert path == ["plan"] + ["code", "test"] * MAX_ITER   # hết MAX_ITER lượt rồi END
     assert not pipe.state().get("released")

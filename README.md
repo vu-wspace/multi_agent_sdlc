@@ -37,13 +37,13 @@ Giới hạn vòng lặp nằm trong `src/multi_agent_sdlc/config.py`:
 
 | Biến | Giá trị | Ý nghĩa |
 |---|---|---|
-| `MAX_ITER` | 3 | Số lượt Coder được sửa (dùng chung cho test, evaluate, review) |
+| `MAX_ITER` | 5 | Số lượt Coder được sửa (dùng chung cho test, evaluate, review) |
 | `MAX_TEST_FIX` | 2 | Số lần Tester tự sửa test khi triage kết luận lỗi nằm ở test |
 | `MAX_PLAN_REVISIONS` | 1 | Số lần Evaluator được đẩy về Plan |
 
 Nếu người duyệt từ chối release, Coder được thêm 1 lượt sửa.
 
-Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline dễ hết 3 lượt trước khi tới release. Khi đó tăng `MAX_ITER`, hoặc hạ `PASS_THRESHOLD` (0.75) trong `nodes/evaluate_node.py`.
+Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline dễ hết 5 lượt trước khi tới release. Khi đó tăng `MAX_ITER`, hoặc hạ `PASS_THRESHOLD` (0.75) trong `nodes/evaluate_node.py`.
 
 ## Các node
 
