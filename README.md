@@ -147,11 +147,26 @@ Script hỏi requirement (nhiều dòng, dòng trống để kết thúc). Nếu
 
 Mỗi lần chỉ một run được dùng `workspace/`, nhờ file lock `.workspace.lock` ở thư mục gốc repo. Khoá này áp dụng cho mọi thread và mọi checkpointer. Run thứ hai sẽ thoát kèm thông báo. Hệ điều hành tự nhả khoá khi process chết, nên không có khoá bị treo.
 
+**Khi pipeline dừng trước release** (hết `MAX_ITER` lượt), script in lý do và 20 dòng đầu của phần chi tiết tương ứng, rồi mới in `Done.`:
+
+```
+Dừng trước release: evaluate chưa đạt sau 5 lượt code (MAX_ITER=5)
+eval_feedback:
+...
+```
+
+Lý do là một trong ba: `test vẫn fail` (in `test_report`), `evaluate chưa đạt` (in `eval_feedback`), `review còn blocker` (in `review_feedback`). Phần này được in ngay vì sau đó không xem lại được: MemorySaver mất khi tắt process, còn checkpoint Postgres thì đã mã hoá. Lưu ý: mỗi lần reject release trả lại 1 lượt, nên con số "sau N lượt" có thể nhỏ hơn số lượt code thật đã chạy.
+
 Thread release xong thì checkpoint bị xoá. Thread dừng vì lỗi hoặc hết lượt thì được giữ lại để xem. Xoá một thread bằng tay:
 
 ```bash
 uv run python -m multi_agent_sdlc.run --purge run-xxxxxxxx
 ```
+
+**Lỗi thường gặp:**
+
+- `openai.APIConnectionError: Connection error` kèm `WinError 10061 ... actively refused it` ngay ở node `plan`: OmniRoute chưa chạy, hoặc `OMNIROUTE_BASE_URL` trỏ sai cổng. Kiểm tra bằng `curl <OMNIROUTE_BASE_URL>/models`.
+- Log `<role>: model chính ... lỗi, dùng model dự phòng ...` lặp lại mỗi lượt: model chính đang lỗi tạm thời hoặc sai tên trên OmniRoute. Chạy `check_models` (ở trên) để xem.
 
 Lúc approve hoặc reject, `release_node` kiểm tra HEAD của `workspace/` còn đúng commit release lúc chuẩn bị không. Nếu đã có run khác commit chồng lên, nó dừng lại, không tag và không reset.
 
@@ -211,3 +226,7 @@ uv run pytest -q
 ```
 
 Test không gọi LLM thật, không kết nối Postgres thật và không gửi trace lên LangSmith (`tests/conftest.py`).
+
+- Test router và test luồng dùng hằng số `MAX_ITER`, nên đổi giới hạn trong `config.py` không cần sửa test.
+- Chạy test trong một git worktree (ví dụ `.claude/worktrees/...`) bằng venv của repo gốc thì phải thêm `PYTHONPATH=src`, vì bản cài editable trỏ về code của repo gốc chứ không phải worktree.
+- Hiện có 2 test đang fail vì tính năng chưa làm: `test_replan_regenerates_tests_for_new_criteria` và `test_inadequate_tests_go_to_tester_not_only_coder` trong `tests/test_pipeline_flow.py`. Chúng yêu cầu Tester sinh lại test sau khi plan đổi hoặc khi Evaluator chấm test thiếu, nhưng `test_node.py` hiện chỉ sinh test lần đầu.
