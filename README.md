@@ -51,7 +51,7 @@ Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline d�
 |---|---|---|---|
 | plan | `nodes/plan_node.py` | Tách yêu cầu thành task và acceptance criteria. Chỉ Python, chỉ stdlib và bcrypt | `plan`, `acceptance_criteria` |
 | code | `nodes/code_node.py` | Sinh hoặc sửa file trong `workspace/src`, rồi commit | `code_files`, `diff`, `iterations` |
-| test | `nodes/test_node.py` | Sinh `tests/`, chạy pytest trong sandbox. Test bị skip cũng tính là fail. Khi fail, triage xem lỗi nằm ở code hay ở test | `tests_passed`, `test_report`, `failure_source` |
+| test | `nodes/test_node.py` | Sinh `tests/` lần đầu; sinh lại khi plan đổi hoặc Evaluator chấm `test_adequacy` ≤ 2 (`retest_hint`), vì Coder không được ghi `tests/`. Chạy pytest trong sandbox. Test bị skip cũng tính là fail. Khi fail, triage xem lỗi nằm ở code hay ở test | `tests_passed`, `test_report`, `failure_source` |
 | evaluate | `nodes/evaluate_node.py` | Chấm điểm theo các tiêu chí, ruff và coverage | `eval_score`, `eval_passed`, `eval_target` |
 | review | `nodes/review_node.py` | Review diff của cả PR, chạy bandit, ghi `REVIEW.md` | `review_approved`, `has_blockers` |
 | ship | `nodes/ship_node.py` | Tăng version, ghi `CHANGELOG.md` và `RELEASE_NOTES.md`, commit release | `version`, `release_notes`, `release_sha` |
@@ -229,4 +229,3 @@ Test không gọi LLM thật, không kết nối Postgres thật và không gử
 
 - Test router và test luồng dùng hằng số `MAX_ITER`, nên đổi giới hạn trong `config.py` không cần sửa test.
 - Chạy test trong một git worktree (ví dụ `.claude/worktrees/...`) bằng venv của repo gốc thì phải thêm `PYTHONPATH=src`, vì bản cài editable trỏ về code của repo gốc chứ không phải worktree.
-- Hiện có 2 test đang fail vì tính năng chưa làm: `test_replan_regenerates_tests_for_new_criteria` và `test_inadequate_tests_go_to_tester_not_only_coder` trong `tests/test_pipeline_flow.py`. Chúng yêu cầu Tester sinh lại test sau khi plan đổi hoặc khi Evaluator chấm test thiếu, nhưng `test_node.py` hiện chỉ sinh test lần đầu.

@@ -127,7 +127,10 @@ def evaluate_node(state: SDLCState) -> dict:
     passed = score >= PASS_THRESHOLD and not gates
 
     feedback = "\n".join(f"- {f}" for f in gates + ev.feedback)
+    # Coder không được ghi tests/ → test yếu phải về tay Tester, nếu không vòng sửa chỉ đụng tới code
+    weak_tests = not passed and ev.test_adequacy.score <= 2
     return {
+        **({"retest_hint": f"Evaluator chê test: {ev.test_adequacy.reason}\n{feedback}"} if weak_tests else {}),
         "eval_score": score,
         "eval_passed": passed,
         "eval_target": "none" if passed else ("plan" if ev.issue_origin == "design" else "code"),

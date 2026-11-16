@@ -20,6 +20,7 @@ class SDLCState(TypedDict, total=False):
     failure_source: str | None
     test_fix_hint: str
     test_fix_attempts: int
+    retest_hint: str              # khác rỗng → Tester sinh lại test (plan đổi / Evaluator chê test)
     # evaluate
     eval_score: float
     eval_passed: bool

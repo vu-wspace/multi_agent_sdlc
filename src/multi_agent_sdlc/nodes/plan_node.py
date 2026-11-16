@@ -52,6 +52,8 @@ def plan_node(state: SDLCState) -> dict:
     return {
         "plan": plan.model_dump_json(indent=2),
         "acceptance_criteria": plan.acceptance_criteria,
+        # criteria mới (plan lại, hoặc requirement mới trên workspace cũ) → test cũ không còn khớp
+        "retest_hint": "Plan đã đổi: viết lại test theo acceptance criteria hiện tại, bỏ test cho criteria không còn.",
         # đếm ở đây (lần plan lại thật sự), không phải ở evaluate
         **({"plan_revisions": state.get("plan_revisions", 0) + 1} if revising else {}),
     }
