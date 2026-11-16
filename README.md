@@ -166,7 +166,8 @@ uv run python -m multi_agent_sdlc.run --purge run-xxxxxxxx
 **Lỗi thường gặp:**
 
 - `openai.APIConnectionError: Connection error` kèm `WinError 10061 ... actively refused it` ngay ở node `plan`: OmniRoute chưa chạy, hoặc `OMNIROUTE_BASE_URL` trỏ sai cổng. Kiểm tra bằng `curl <OMNIROUTE_BASE_URL>/models`.
-- Log `<role>: model chính ... lỗi, dùng model dự phòng ...` lặp lại mỗi lượt: model chính đang lỗi tạm thời hoặc sai tên trên OmniRoute. Chạy `check_models` (ở trên) để xem.
+- Log `<role>: model chính ... lỗi, dùng model dự phòng ...` lặp lại mỗi lượt: dòng log ngay trước đó (`<role>: <model> lỗi <Loại lỗi>: ...`) cho biết lý do. Chạy `check_models` (ở trên) để kiểm tra từng model.
+- `401 No active credentials for provider: <provider>`: OmniRoute chưa đăng nhập (hoặc hết hạn) provider đó, ví dụ `antigravity` cho model `agy/...`. Đăng nhập lại provider trong OmniRoute, hoặc đổi thứ tự model trong `.env`. Lỗi 401 **không** chuyển sang model dự phòng (xem mục "Dữ liệu ra khỏi máy"), nên run sẽ dừng ở node đó.
 
 Lúc approve hoặc reject, `release_node` kiểm tra HEAD của `workspace/` còn đúng commit release lúc chuẩn bị không. Nếu đã có run khác commit chồng lên, nó dừng lại, không tag và không reset.
 

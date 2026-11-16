@@ -57,9 +57,18 @@ def structured(role: str, schema, temperature: float = 0.0, max_tokens: int = 32
             return out
         return RunnableLambda(check)
 
-    chains = [get_llm(role, temperature=temperature, max_tokens=max_tokens, model=m)
-              .with_structured_output(schema, method="function_calling", include_raw=True)
-              | checker(m)
+    def logged(chain, model):
+        def call(inp, config):
+            try:
+                return chain.invoke(inp, config)
+            except TRANSIENT as e:   # with_fallbacks nuốt lỗi: không ghi lại thì không biết model chính lỗi vì sao
+                log.warning("%s: %s lỗi %s: %s", role, model, type(e).__name__, str(e)[:200])
+                raise
+        return RunnableLambda(call)
+
+    chains = [logged(get_llm(role, temperature=temperature, max_tokens=max_tokens, model=m)
+                     .with_structured_output(schema, method="function_calling", include_raw=True)
+                     | checker(m), m)
               for m in models]
     if not chains:
         get_llm(role)                                     # ném lỗi "Thiếu MODEL_..." rõ ràng

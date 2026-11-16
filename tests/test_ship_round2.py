@@ -180,6 +180,7 @@ def test_fallback_on_transient_errors(monkeypatch, caplog, cls, status):
         assert llm.structured("evaluator", dict, retries=1).invoke("x") == "ok"
     assert calls == ["a", "b"]
     assert "model dự phòng b" in caplog.text            # log model nào đã trả lời thay
+    assert f"a lỗi {cls.__name__}" in caplog.text      # và vì sao model chính lỗi
 
 
 def test_all_models_failing_raises_and_tries_each(monkeypatch):
