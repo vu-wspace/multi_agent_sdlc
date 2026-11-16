@@ -125,9 +125,11 @@ def format_report(res: dict) -> str:
 
 # ---------- Node ----------
 def test_node(state: SDLCState) -> dict:
-    # Chỉ sinh test lần đầu, hoặc khi vòng trước xác định test viết sai
+    # Sinh test lần đầu, khi plan đổi / Evaluator chê test (retest_hint), hoặc khi vòng trước xác định test viết sai
     if not any(WORKSPACE.glob("tests/test_*.py")):
         generate_tests(state)
+    elif state.get("retest_hint"):
+        generate_tests(state, fix_hint=state["retest_hint"])
     elif state.get("failure_source") == "test_bug":
         generate_tests(state, fix_hint=state.get("test_fix_hint", ""))
 
@@ -141,6 +143,7 @@ def test_node(state: SDLCState) -> dict:
         "tests_passed": passed,
         "test_report": report,
         "failure_source": None,
+        "retest_hint": "",                   # đã xử lý (hoặc vừa sinh lần đầu) → không sinh lại ở vòng sau
         "test_fix_attempts": state.get("test_fix_attempts", 0),
     }
     if passed:

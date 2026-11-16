@@ -28,6 +28,6 @@ MODELS = {
     "shipper":   os.environ.get("MODEL_SHIPPER"),
 }
 
-MAX_ITER = 3
+MAX_ITER = 5   # 3 không đủ cho luồng có cả eval fail + review từ chối
 MAX_TEST_FIX = 2
 MAX_PLAN_REVISIONS = 1

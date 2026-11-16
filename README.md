@@ -37,13 +37,13 @@ Giới hạn vòng lặp nằm trong `src/multi_agent_sdlc/config.py`:
 
 | Biến | Giá trị | Ý nghĩa |
 |---|---|---|
-| `MAX_ITER` | 3 | Số lượt Coder được sửa (dùng chung cho test, evaluate, review) |
+| `MAX_ITER` | 5 | Số lượt Coder được sửa (dùng chung cho test, evaluate, review) |
 | `MAX_TEST_FIX` | 2 | Số lần Tester tự sửa test khi triage kết luận lỗi nằm ở test |
 | `MAX_PLAN_REVISIONS` | 1 | Số lần Evaluator được đẩy về Plan |
 
 Nếu người duyệt từ chối release, Coder được thêm 1 lượt sửa.
 
-Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline dễ hết 3 lượt trước khi tới release. Khi đó tăng `MAX_ITER`, hoặc hạ `PASS_THRESHOLD` (0.75) trong `nodes/evaluate_node.py`.
+Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline dễ hết 5 lượt trước khi tới release. Khi đó tăng `MAX_ITER`, hoặc hạ `PASS_THRESHOLD` (0.75) trong `nodes/evaluate_node.py`.
 
 ## Các node
 
@@ -51,7 +51,7 @@ Reviewer và Evaluator khá khắt khe, nên với yêu cầu lớn pipeline d�
 |---|---|---|---|
 | plan | `nodes/plan_node.py` | Tách yêu cầu thành task và acceptance criteria. Chỉ Python, chỉ stdlib và bcrypt | `plan`, `acceptance_criteria` |
 | code | `nodes/code_node.py` | Sinh hoặc sửa file trong `workspace/src`, rồi commit | `code_files`, `diff`, `iterations` |
-| test | `nodes/test_node.py` | Sinh `tests/`, chạy pytest trong sandbox. Test bị skip cũng tính là fail. Khi fail, triage xem lỗi nằm ở code hay ở test | `tests_passed`, `test_report`, `failure_source` |
+| test | `nodes/test_node.py` | Sinh `tests/` lần đầu; sinh lại khi plan đổi hoặc Evaluator chấm `test_adequacy` ≤ 2 (`retest_hint`), vì Coder không được ghi `tests/`. Chạy pytest trong sandbox. Test bị skip cũng tính là fail. Khi fail, triage xem lỗi nằm ở code hay ở test | `tests_passed`, `test_report`, `failure_source` |
 | evaluate | `nodes/evaluate_node.py` | Chấm điểm theo các tiêu chí, ruff và coverage | `eval_score`, `eval_passed`, `eval_target` |
 | review | `nodes/review_node.py` | Review diff của cả PR, chạy bandit, ghi `REVIEW.md` | `review_approved`, `has_blockers` |
 | ship | `nodes/ship_node.py` | Tăng version, ghi `CHANGELOG.md` và `RELEASE_NOTES.md`, commit release | `version`, `release_notes`, `release_sha` |
@@ -147,11 +147,27 @@ Script hỏi requirement (nhiều dòng, dòng trống để kết thúc). Nếu
 
 Mỗi lần chỉ một run được dùng `workspace/`, nhờ file lock `.workspace.lock` ở thư mục gốc repo. Khoá này áp dụng cho mọi thread và mọi checkpointer. Run thứ hai sẽ thoát kèm thông báo. Hệ điều hành tự nhả khoá khi process chết, nên không có khoá bị treo.
 
+**Khi pipeline dừng trước release** (hết `MAX_ITER` lượt), script in lý do và 20 dòng đầu của phần chi tiết tương ứng, rồi mới in `Done.`:
+
+```
+Dừng trước release: evaluate chưa đạt sau 5 lượt code (MAX_ITER=5)
+eval_feedback:
+...
+```
+
+Lý do là một trong ba: `test vẫn fail` (in `test_report`), `evaluate chưa đạt` (in `eval_feedback`), `review còn blocker` (in `review_feedback`). Phần này được in ngay vì sau đó không xem lại được: MemorySaver mất khi tắt process, còn checkpoint Postgres thì đã mã hoá. Con số "sau N lượt" là số lượt code thật (`code_passes`), kể cả các lượt được trả lại khi reject release, nên có thể lớn hơn `MAX_ITER`.
+
 Thread release xong thì checkpoint bị xoá. Thread dừng vì lỗi hoặc hết lượt thì được giữ lại để xem. Xoá một thread bằng tay:
 
 ```bash
 uv run python -m multi_agent_sdlc.run --purge run-xxxxxxxx
 ```
+
+**Lỗi thường gặp:**
+
+- `openai.APIConnectionError: Connection error` kèm `WinError 10061 ... actively refused it` ngay ở node `plan`: OmniRoute chưa chạy, hoặc `OMNIROUTE_BASE_URL` trỏ sai cổng. Kiểm tra bằng `curl <OMNIROUTE_BASE_URL>/models`.
+- Log `<role>: model chính ... lỗi, dùng model dự phòng ...` lặp lại mỗi lượt: dòng log ngay trước đó (`<role>: <model> lỗi <Loại lỗi>: ...`) cho biết lý do. Chạy `check_models` (ở trên) để kiểm tra từng model.
+- `401 No active credentials for provider: <provider>`: OmniRoute chưa đăng nhập (hoặc hết hạn) provider đó, ví dụ `antigravity` cho model `agy/...`. Đăng nhập lại provider trong OmniRoute, hoặc đổi thứ tự model trong `.env`. Lỗi 401 **không** chuyển sang model dự phòng (xem mục "Dữ liệu ra khỏi máy"), nên run sẽ dừng ở node đó.
 
 Lúc approve hoặc reject, `release_node` kiểm tra HEAD của `workspace/` còn đúng commit release lúc chuẩn bị không. Nếu đã có run khác commit chồng lên, nó dừng lại, không tag và không reset.
 
@@ -211,3 +227,6 @@ uv run pytest -q
 ```
 
 Test không gọi LLM thật, không kết nối Postgres thật và không gửi trace lên LangSmith (`tests/conftest.py`).
+
+- Test router và test luồng dùng hằng số `MAX_ITER`, nên đổi giới hạn trong `config.py` không cần sửa test.
+- Chạy test trong một git worktree (ví dụ `.claude/worktrees/...`) bằng venv của repo gốc thì phải thêm `PYTHONPATH=src`, vì bản cài editable trỏ về code của repo gốc chứ không phải worktree.

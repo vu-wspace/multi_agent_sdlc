@@ -13,13 +13,15 @@ class SDLCState(TypedDict, total=False):
     code_files: list[str]
     code_notes: str
     diff: str
-    iterations: int
+    iterations: int               # ngân sách đã dùng (so với MAX_ITER); reject release trả lại 1
+    code_passes: int              # số lượt code thật đã chạy, chỉ tăng
     # test
     tests_passed: bool
     test_report: str
     failure_source: str | None
     test_fix_hint: str
     test_fix_attempts: int
+    retest_hint: str              # khác rỗng → Tester sinh lại test (plan đổi / Evaluator chê test)
     # evaluate
     eval_score: float
     eval_passed: bool

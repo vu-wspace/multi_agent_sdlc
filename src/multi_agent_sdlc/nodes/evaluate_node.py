@@ -12,6 +12,7 @@ from ..config import MAX_ITER, MAX_PLAN_REVISIONS
 from ..llm import structured
 from ..state import SDLCState
 from .code_node import DOCKER_FAILED, SANDBOX, WORKSPACE, read_workspace
+from .plan_node import SANDBOX_CONSTRAINTS
 from .test_node import read_tests
 
 
@@ -40,11 +41,16 @@ class Evaluation(BaseModel):
 def evaluator_structured():
     return structured("evaluator", Evaluation, retries=1)
 
-EVALUATOR_SYSTEM = """Bạn là Principal Engineer độc lập đánh giá một deliverable.
+EVALUATOR_SYSTEM = f"""Bạn là Principal Engineer độc lập đánh giá một deliverable.
 - Đánh giá dựa trên YÊU CẦU và ACCEPTANCE CRITERIA, không dựa trên lời giải thích của người viết code.
 - Test pass KHÔNG có nghĩa là đạt: hãy tìm yêu cầu bị bỏ sót hoặc test quá dễ.
 - Mỗi nhận định phải có bằng chứng (tên file/hàm).
-- Chấm nghiêm: 3 = chấp nhận được, 4 = tốt, 5 = xuất sắc hiếm khi có."""
+- Chấm nghiêm: 3 = chấp nhận được, 4 = tốt, 5 = xuất sắc hiếm khi có.
+
+{SANDBOX_CONSTRAINTS}
+- Lệch khỏi yêu cầu VÌ các ràng buộc trên (vd dùng stdlib thay Flask, HTML thay JS) không phải lỗi design:
+  đừng đặt issue_origin="design" vì lý do đó (plan lại cũng không đổi được), chỉ ghi vào feedback như giới hạn đã biết.
+- issue_origin="design" chỉ khi plan sai/thiếu mà một plan khác TRONG ràng buộc trên sửa được."""
 
 WEIGHTS = {"correctness": 0.35, "design": 0.20, "code_quality": 0.15,
            "robustness": 0.15, "test_adequacy": 0.15}
@@ -121,20 +127,22 @@ def evaluate_node(state: SDLCState) -> dict:
     passed = score >= PASS_THRESHOLD and not gates
 
     feedback = "\n".join(f"- {f}" for f in gates + ev.feedback)
+    # Coder không được ghi tests/ → test yếu phải về tay Tester, nếu không vòng sửa chỉ đụng tới code
+    weak_tests = not passed and ev.test_adequacy.score <= 2
     return {
+        **({"retest_hint": f"Evaluator chê test: {ev.test_adequacy.reason}\n{feedback}"} if weak_tests else {}),
         "eval_score": score,
         "eval_passed": passed,
         "eval_target": "none" if passed else ("plan" if ev.issue_origin == "design" else "code"),
         "eval_feedback": feedback,
         "eval_detail": ev.model_dump(),          # lưu lại để làm báo cáo / dashboard
-        "plan_revisions": state.get("plan_revisions", 0) + (1 if state.get("eval_feedback") else 0),
     }
 
 
 def after_eval(s) -> Literal["review", "plan", "code", "__end__"]:
     if s["eval_passed"]:
         return "review"
-    if s["eval_target"] == "plan" and s["plan_revisions"] < MAX_PLAN_REVISIONS:
+    if s["eval_target"] == "plan" and s.get("plan_revisions", 0) < MAX_PLAN_REVISIONS:
         return "plan"
     if s["iterations"] < MAX_ITER:
         return "code"

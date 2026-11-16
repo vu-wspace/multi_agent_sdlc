@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from multi_agent_sdlc.config import MAX_ITER
 from multi_agent_sdlc.nodes.code_node import WORKSPACE, safe_path
 from multi_agent_sdlc.nodes.evaluate_node import (
     CriterionVerdict,
@@ -113,9 +114,9 @@ def test_format_feedback_keeps_only_blocking_comments():
 # ---------- routers ----------
 @pytest.mark.parametrize("state,expected", [
     ({"tests_passed": True}, "evaluate"),
-    ({"tests_passed": False, "failure_source": "test_bug", "test_fix_attempts": 2, "iterations": 3}, "test"),
+    ({"tests_passed": False, "failure_source": "test_bug", "test_fix_attempts": 2, "iterations": MAX_ITER}, "test"),
     ({"tests_passed": False, "failure_source": "test_bug", "test_fix_attempts": 3, "iterations": 1}, "code"),
-    ({"tests_passed": False, "failure_source": "code_bug", "test_fix_attempts": 0, "iterations": 3}, "__end__"),
+    ({"tests_passed": False, "failure_source": "code_bug", "test_fix_attempts": 0, "iterations": MAX_ITER}, "__end__"),
 ])
 def test_after_test(state, expected):
     assert after_test(state) == expected
@@ -125,7 +126,7 @@ def test_after_test(state, expected):
     ({"eval_passed": True}, "review"),
     ({"eval_passed": False, "eval_target": "plan", "plan_revisions": 0, "iterations": 1}, "plan"),
     ({"eval_passed": False, "eval_target": "plan", "plan_revisions": 1, "iterations": 1}, "code"),
-    ({"eval_passed": False, "eval_target": "code", "plan_revisions": 0, "iterations": 3}, "__end__"),
+    ({"eval_passed": False, "eval_target": "code", "plan_revisions": 0, "iterations": MAX_ITER}, "__end__"),
 ])
 def test_after_eval(state, expected):
     assert after_eval(state) == expected
@@ -134,8 +135,8 @@ def test_after_eval(state, expected):
 @pytest.mark.parametrize("state,expected", [
     ({"review_approved": True}, "ship"),
     ({"review_approved": False, "iterations": 1}, "code"),
-    ({"review_approved": False, "iterations": 3, "has_blockers": True}, "__end__"),
-    ({"review_approved": False, "iterations": 3, "has_blockers": False}, "ship"),
+    ({"review_approved": False, "iterations": MAX_ITER, "has_blockers": True}, "__end__"),
+    ({"review_approved": False, "iterations": MAX_ITER, "has_blockers": False}, "ship"),
 ])
 def test_after_review(state, expected):
     assert after_review(state) == expected
